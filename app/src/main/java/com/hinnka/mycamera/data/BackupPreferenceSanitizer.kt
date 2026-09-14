@@ -62,6 +62,7 @@ internal object BackupPreferenceSanitizer {
         "video_audio_input_id",
         "oppo_super_stabilization_enabled",
         "camera_startup_defaults_restored_v1",
+        BuiltInDeviceConfigurationMigration.APPLIED_DEVICE_KEY_NAME,
     )
 
     private val deviceSpecificPresetFields = setOf(

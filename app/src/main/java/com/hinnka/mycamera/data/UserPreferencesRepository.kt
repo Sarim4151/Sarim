@@ -69,8 +69,11 @@ import org.json.JSONObject
  */
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
     name = "user_preferences",
-    produceMigrations = {
-        listOf(OpenAiApiKeyEncryptionMigration())
+    produceMigrations = { context ->
+        listOf(
+            OpenAiApiKeyEncryptionMigration(),
+            BuiltInDeviceConfigurationMigration.create(context),
+        )
     },
 )
 

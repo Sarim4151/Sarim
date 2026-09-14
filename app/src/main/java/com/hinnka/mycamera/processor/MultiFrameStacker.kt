@@ -38,7 +38,7 @@ enum class MgcRawMaxMode {
     SPATIAL;
 
     companion object {
-        val DEFAULT: MgcRawMaxMode = SPATIAL
+        val DEFAULT: MgcRawMaxMode = SABRE
     }
 
     val supportsBracketExposure: Boolean

@@ -71,6 +71,7 @@ class BackupPreferenceSanitizerTest {
             PreferenceMap.newBuilder()
                 .putPreferences("preferred_main_camera_id", stringValue("backup-camera"))
                 .putPreferences("raw_dcp_ids_by_lens", stringValue("backup-dcp-map"))
+                .putPreferences(BuiltInDeviceConfigurationMigration.APPLIED_DEVICE_KEY_NAME, stringValue("oppo/pma110"))
                 .putPreferences("raw_color_engine", stringValue("HncsLut"))
                 .putPreferences("custom_lens_ids", stringValue("backup-custom-lens"))
                 .putPreferences("photo_save_path", stringValue("BACKUP_PATH"))
@@ -91,6 +92,7 @@ class BackupPreferenceSanitizerTest {
             PreferenceMap.newBuilder()
                 .putPreferences("preferred_main_camera_id", stringValue("current-camera"))
                 .putPreferences("raw_dcp_ids_by_lens", stringValue("current-dcp-map"))
+                .putPreferences(BuiltInDeviceConfigurationMigration.APPLIED_DEVICE_KEY_NAME, stringValue("oppo/pkj110"))
                 .putPreferences("raw_color_engine", stringValue("AdobeCurve"))
                 .putPreferences("photo_save_path", stringValue("CURRENT_PATH"))
                 .putPreferences(
@@ -111,6 +113,7 @@ class BackupPreferenceSanitizerTest {
         val sanitizedMap = FileInputStream(restoredPreferencesFile).use(PreferenceMap::parseFrom)
         assertEquals("current-camera", sanitizedMap.preferencesMap.getValue("preferred_main_camera_id").string)
         assertEquals("current-dcp-map", sanitizedMap.preferencesMap.getValue("raw_dcp_ids_by_lens").string)
+        assertEquals("oppo/pkj110", sanitizedMap.preferencesMap.getValue(BuiltInDeviceConfigurationMigration.APPLIED_DEVICE_KEY_NAME).string)
         assertEquals("AdobeCurve", sanitizedMap.preferencesMap.getValue("raw_color_engine").string)
         assertEquals("CURRENT_PATH", sanitizedMap.preferencesMap.getValue("photo_save_path").string)
         assertFalse(sanitizedMap.containsPreferences("custom_lens_ids"))
