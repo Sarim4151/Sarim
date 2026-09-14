@@ -101,12 +101,8 @@ class Camera2Controller(private val context: Context) {
         private const val BURST_CAPTURE_BATCH_SIZE = 8
 
         // 拍照状态机常量
-        private const val STATE_PREVIEW = 0 // Showing camera preview.
-        private const val STATE_WAITING_PRECAPTURE = 2 // Waiting for the exposure to be precapture state.
-        private const val STATE_WAITING_NON_PRECAPTURE =
-            3 // Waiting for the exposure state to be something other than precapture.
-        private const val STATE_PICTURE_TAKEN = 4 // Picture is already taken.
         private const val PRECAPTURE_TIMEOUT_MS = 3_000L
+        private const val PRECAPTURE_MAX_WAIT_FRAMES = 60L
         private const val MULTI_FRAME_TORCH_WARMUP_TIMEOUT_MS = 2_000L
         private const val EIS_PLUS_INPUT_WATCHDOG_MS = 2_000L
         private const val OPPO_SUPER_STABILIZATION_REAR_SESSION_MODE = 0x8028
@@ -205,12 +201,30 @@ class Camera2Controller(private val context: Context) {
         val generation: Long,
     )
 
-    private data class PrecaptureRequestTag(
+    private enum class StillFlashPhase {
+        APPLYING_SESSION,
+        WAITING_AF_CONVERGENCE,
+        WAITING_AE_AF,
+    }
+
+    private data class StillFlashRequestTag(
         val generation: Long,
+        val phase: StillFlashPhase,
+        val isTrigger: Boolean,
     )
 
-    private data class PrecaptureSessionUpdateTag(
+    private data class StillFlashPrecapture(
         val generation: Long,
+        val afMode: Int,
+        val triggerAf: Boolean,
+        var phase: StillFlashPhase = StillFlashPhase.APPLYING_SESSION,
+        var triggerFrameNumber: Long? = null,
+        var triggerSequenceId: Int? = null,
+        var repeatingSequenceId: Int? = null,
+        var firstResultFrameNumber: Long? = null,
+        var lastResult: TotalCaptureResult? = null,
+        var aeReady: Boolean = false,
+        var afReady: Boolean = false,
     )
 
     private data class MultiFrameTorchWarmupRequestTag(
@@ -239,17 +253,17 @@ class Camera2Controller(private val context: Context) {
     private val cameraDiscovery = CameraDiscovery(context)
 
     // --- 拍照状态机相关 ---
-    private var internalCaptureState = STATE_PREVIEW
 
     // 缓存拍照所需的设备和 Reader，供状态机回调使用
     private var pendingCaptureDevice: CameraDevice? = null
     private var pendingCaptureReader: ImageReader? = null
     private var pendingCaptureBaseExposureResult: CaptureResult? = null
     private var precaptureGeneration = 0L
-    private var activePrecaptureGeneration = 0L
-    private var precaptureTriggerFrameNumber: Long? = null
-    private var precaptureTriggerSubmitted = false
-    private var precaptureTriggerResultSeen = false
+    private var stillFlashPrecapture: StillFlashPrecapture? = null
+    private var stillFlashCaptureState: CameraState? = null
+    // Keep the capture-owned AF mode until the still request finishes and AF is cancelled.
+    private var stillFlashAfMode: Int? = null
+    private var stillFlashFocusDistance: Float? = null
     private var precaptureTimeoutRunnable: Runnable? = null
     private var multiFrameTorchWarmupGeneration = 0L
     private var activeMultiFrameTorchWarmupGeneration = 0L
@@ -1020,17 +1034,11 @@ class Camera2Controller(private val context: Context) {
         ) {
             super.onCaptureStarted(session, request, timestamp, frameNumber)
             recordMultiFrameAfTriggerFrame(request, frameNumber)
-            val tag = request.tag as? PrecaptureRequestTag ?: return
-            if (tag.generation != activePrecaptureGeneration ||
-                internalCaptureState != STATE_WAITING_PRECAPTURE
-            ) {
-                return
+            val tag = request.tag as? StillFlashRequestTag ?: return
+            val pending = stillFlashPrecapture ?: return
+            if (tag.generation == pending.generation && tag.phase == pending.phase && tag.isTrigger) {
+                pending.triggerFrameNumber = frameNumber
             }
-            precaptureTriggerFrameNumber = frameNumber
-            PLog.d(
-                TAG,
-                "Precapture trigger started: generation=${tag.generation}, frame=$frameNumber"
-            )
         }
 
         override fun onCaptureFailed(
@@ -1038,6 +1046,14 @@ class Camera2Controller(private val context: Context) {
             request: CaptureRequest,
             failure: CaptureFailure,
         ) {
+            val flashTag = request.tag as? StillFlashRequestTag
+            if (flashTag != null) {
+                val pending = stillFlashPrecapture ?: return
+                if (flashTag.generation == pending.generation && flashTag.phase == pending.phase) {
+                    abortStillFlashPrecapture("request failed: frame=${failure.frameNumber} reason=${failure.reason}")
+                }
+                return
+            }
             val tag = request.tag as? MultiFrameAfTriggerTag ?: return
             val pending = pendingMultiFrameFocusCapture ?: return
             if (tag.generation != pending.generation) return
@@ -1047,6 +1063,13 @@ class Camera2Controller(private val context: Context) {
         }
 
         override fun onCaptureSequenceAborted(session: CameraCaptureSession, sequenceId: Int) {
+            if (session !== captureSession) return
+            stillFlashPrecapture?.let { pending ->
+                if (sequenceId == pending.triggerSequenceId || sequenceId == pending.repeatingSequenceId) {
+                    abortStillFlashPrecapture("capture sequence aborted: $sequenceId")
+                    return
+                }
+            }
             val pending = pendingMultiFrameFocusCapture ?: return
             if (pending.triggerSequenceId != sequenceId) return
             PLog.w(TAG, "Multi-frame AF trigger aborted: generation=${pending.generation} sequence=$sequenceId")
@@ -1070,20 +1093,8 @@ class Camera2Controller(private val context: Context) {
             processPendingMultiFrameFocusResult(result)
             logVideoCaptureStats(result)
 
-            val precaptureTag = request.tag as? PrecaptureRequestTag
-            if (precaptureTag?.generation == activePrecaptureGeneration) {
-                // onCaptureStarted normally arrives first, but use the completed result as a
-                // fallback for devices that omit the started callback.
-                if (precaptureTriggerFrameNumber == null) {
-                    precaptureTriggerFrameNumber = result.frameNumber
-                }
-                precaptureTriggerResultSeen = true
-            }
-
-            processPrecaptureSessionUpdate(request, result)
-
             // 处理拍照状态机
-            processCaptureState(result)
+            processStillFlashPrecapture(request, result)
             processMultiFrameTorchWarmupState(request, result)
 
             // 监听对焦状态
@@ -1213,7 +1224,6 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private var lastAeState: Int? = null
     private var lastAfState: Int? = null
 
     private fun logVideoCaptureStats(result: TotalCaptureResult) {
@@ -1253,155 +1263,194 @@ class Camera2Controller(private val context: Context) {
         videoCaptureStatsFirstTimestampNs = sensorTimestampNs
     }
 
-    /**
-     * 处理拍照状态机的核心逻辑
-     */
-    private fun processCaptureState(result: TotalCaptureResult) {
-        if (internalCaptureState != STATE_WAITING_PRECAPTURE &&
-            internalCaptureState != STATE_WAITING_NON_PRECAPTURE
-        ) {
-            return
-        }
+    /** MGC forced flash: AE converged, AF locked when supported, AWB unrestricted. */
+    private fun processStillFlashPrecapture(request: CaptureRequest, result: TotalCaptureResult) {
+        val pending = stillFlashPrecapture ?: return
+        val tag = request.tag as? StillFlashRequestTag ?: return
+        if (tag.generation != pending.generation || tag.phase != pending.phase) return
 
-        val triggerFrameNumber = precaptureTriggerFrameNumber ?: return
-        if (result.frameNumber < triggerFrameNumber) {
-            return
+        if (tag.isTrigger && pending.triggerFrameNumber == null) {
+            pending.triggerFrameNumber = result.frameNumber
         }
+        if (pending.phase != StillFlashPhase.APPLYING_SESSION) {
+            val triggerFrame = pending.triggerFrameNumber ?: return
+            if (result.frameNumber < triggerFrame) return
+        }
+        if (pending.firstResultFrameNumber == null) {
+            pending.firstResultFrameNumber = result.frameNumber
+        }
+        pending.lastResult = result
 
+        val aeMode = result.get(CaptureResult.CONTROL_AE_MODE)
+        val afMode = result.get(CaptureResult.CONTROL_AF_MODE)
         val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
-        if (aeState != lastAeState) {
-            PLog.d(
-                TAG,
-                "Precapture AE state: generation=$activePrecaptureGeneration, " +
-                    "frame=${result.frameNumber}, state=$aeState"
-            )
-            lastAeState = aeState
-        }
-
-        when (internalCaptureState) {
-            STATE_WAITING_PRECAPTURE -> {
-                if (precaptureTriggerResultSeen) {
-                    // The trigger result itself is never a valid still-capture exposure
-                    // result. Move to the post-trigger phase and evaluate a later repeating
-                    // result, even when this device reports CONVERGED/FLASH_REQUIRED/null on
-                    // the trigger frame instead of reporting PRECAPTURE.
-                    internalCaptureState = STATE_WAITING_NON_PRECAPTURE
-                }
-            }
-
-            STATE_WAITING_NON_PRECAPTURE -> {
-                if (aeState != CaptureResult.CONTROL_AE_STATE_PRECAPTURE &&
-                    isStillFlash3aReady(result)
-                ) {
-                    completePrecapture(result, "left PRECAPTURE")
-                }
-            }
-        }
-    }
-
-    private fun isStillFlash3aReady(result: CaptureResult): Boolean {
-        val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
-        val aeReady = aeState == null ||
-            aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED ||
-            // CameraX treats FLASH_REQUIRED as a converged result for a normal physical
-            // flash. Only its torch-as-flash path excludes this state because some devices
-            // report FLASH_REQUIRED continuously while the torch is enabled.
-            aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED
-        val awbState = result.get(CaptureResult.CONTROL_AWB_STATE)
-        val awbReady = awbState == null || awbState == CaptureResult.CONTROL_AWB_STATE_CONVERGED
-        return aeReady && awbReady && isFlashAfReady(result)
-    }
-
-    private fun processPrecaptureSessionUpdate(
-        request: CaptureRequest,
-        result: TotalCaptureResult,
-    ) {
-        val tag = request.tag as? PrecaptureSessionUpdateTag ?: return
-        if (tag.generation != activePrecaptureGeneration ||
-            internalCaptureState != STATE_WAITING_PRECAPTURE ||
-            precaptureTriggerSubmitted
-        ) {
-            return
-        }
-
-        val requestedAeMode = request.get(CaptureRequest.CONTROL_AE_MODE)
-        val appliedAeMode = result.get(CaptureResult.CONTROL_AE_MODE)
-        val requestedFlashMode = request.get(CaptureRequest.FLASH_MODE)
-        val appliedFlashMode = result.get(CaptureResult.FLASH_MODE)
-        val sessionUpdateApplied =
-            (appliedAeMode == null || appliedAeMode == requestedAeMode) &&
-                (appliedFlashMode == null || appliedFlashMode == requestedFlashMode)
-        if (!sessionUpdateApplied) {
-            PLog.w(
-                TAG,
-                "Waiting for flash session update: requestedAe=$requestedAeMode " +
-                    "appliedAe=$appliedAeMode requestedFlash=$requestedFlashMode " +
-                    "appliedFlash=$appliedFlashMode"
-            )
-            return
-        }
-
+        val afState = result.get(CaptureResult.CONTROL_AF_STATE)
         PLog.d(
             TAG,
-            "Flash session update applied: generation=${tag.generation}, " +
-                "aeMode=$appliedAeMode, flashMode=$appliedFlashMode, frame=${result.frameNumber}"
+            "Still flash 3A: generation=${pending.generation} phase=${pending.phase} " +
+                "frame=${result.frameNumber} trigger=${tag.isTrigger} " +
+                "aeMode=$aeMode ae=$aeState afMode=$afMode af=$afState " +
+                "awb=${result.get(CaptureResult.CONTROL_AWB_STATE)} " +
+                "flash=${result.get(CaptureResult.FLASH_STATE)}",
         )
-        submitPrecaptureTrigger(tag.generation)
+        when (pending.phase) {
+            StillFlashPhase.APPLYING_SESSION -> {
+                val flashMode = result.get(CaptureResult.FLASH_MODE)
+                if (aeMode == request.get(CaptureRequest.CONTROL_AE_MODE) &&
+                    afMode == pending.afMode &&
+                    flashMode == request.get(CaptureRequest.FLASH_MODE)
+                ) {
+                    val continuousAf = pending.afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE ||
+                        pending.afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+                    submitStillFlashPhase(
+                        pending,
+                        if (pending.triggerAf && continuousAf) StillFlashPhase.WAITING_AF_CONVERGENCE
+                        else StillFlashPhase.WAITING_AE_AF,
+                    )
+                    return
+                }
+            }
+            StillFlashPhase.WAITING_AF_CONVERGENCE -> {
+                // CANCEL releases any previous continuous-AF lock before starting a new sweep.
+                if (afMode == pending.afMode &&
+                    (afState == CaptureResult.CONTROL_AF_STATE_INACTIVE ||
+                        afState == CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED ||
+                        afState == CaptureResult.CONTROL_AF_STATE_PASSIVE_UNFOCUSED)
+                ) {
+                    submitStillFlashPhase(pending, StillFlashPhase.WAITING_AE_AF)
+                    return
+                }
+            }
+            StillFlashPhase.WAITING_AE_AF -> {
+                // The trigger result is eligible. Like MGC's per-key listeners, retain each
+                // completed condition while waiting for the other; AWB is not a prerequisite.
+                pending.aeReady = pending.aeReady ||
+                    (aeMode == request.get(CaptureRequest.CONTROL_AE_MODE) &&
+                        (aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED ||
+                            aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED))
+                pending.afReady = pending.afReady || !pending.triggerAf ||
+                    (afMode == pending.afMode &&
+                        (afState == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED ||
+                            afState == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED))
+                if (pending.aeReady && pending.afReady) {
+                    completePrecapture(result, "AE converged and AF ready")
+                    return
+                }
+            }
+        }
+        if (result.frameNumber - pending.firstResultFrameNumber!! > PRECAPTURE_MAX_WAIT_FRAMES) {
+            onStillFlashPhaseTimeout(pending, "frame limit")
+        }
     }
 
-    private fun submitPrecaptureTrigger(generation: Long) {
-        if (precaptureTriggerSubmitted) return
+    private fun buildStillFlashPreviewRequest(
+        device: CameraDevice,
+        target: Surface,
+        pending: StillFlashPrecapture,
+        isTrigger: Boolean,
+    ): CaptureRequest {
+        val triggerAe = isTrigger && pending.phase == StillFlashPhase.WAITING_AE_AF
+        return device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            addTarget(target)
+            applyBaseCameraSettings(
+                builder = this,
+                isCapture = false,
+                useStillFlashAeMode = true,
+                useStillFlashTrigger = triggerAe,
+                currentState = checkNotNull(stillFlashCaptureState),
+            )
+            set(CaptureRequest.CONTROL_CAPTURE_INTENT, CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW)
+            set(CaptureRequest.CONTROL_AE_LOCK, false)
+            set(CaptureRequest.CONTROL_AF_MODE, pending.afMode)
+            set(
+                CaptureRequest.CONTROL_AF_TRIGGER,
+                when {
+                    !isTrigger || !pending.triggerAf -> CaptureRequest.CONTROL_AF_TRIGGER_IDLE
+                    pending.phase == StillFlashPhase.WAITING_AF_CONVERGENCE -> CaptureRequest.CONTROL_AF_TRIGGER_CANCEL
+                    else -> CaptureRequest.CONTROL_AF_TRIGGER_START
+                },
+            )
+            setAePrecaptureTriggerIfSupported(
+                this,
+                if (triggerAe) CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START
+                else CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE,
+            )
+            previewRequestBuilder?.let { preview ->
+                preview.get(CaptureRequest.CONTROL_AF_REGIONS)?.let { set(CaptureRequest.CONTROL_AF_REGIONS, it) }
+                preview.get(CaptureRequest.CONTROL_AE_REGIONS)?.let { set(CaptureRequest.CONTROL_AE_REGIONS, it) }
+            }
+            setTag(StillFlashRequestTag(pending.generation, pending.phase, isTrigger))
+        }.build()
+    }
 
+    private fun submitStillFlashPhase(pending: StillFlashPrecapture, phase: StillFlashPhase) {
+        if (stillFlashPrecapture !== pending) return
         val session = captureSession
         val device = cameraDevice
-        val previewTarget = previewSurface
+        val target = previewSurface
         val handler = cameraHandler
-        if (session == null || device == null || previewTarget == null || handler == null) {
-            completePrecapture(lastCaptureResult, "precapture trigger unavailable")
+        if (session == null || device == null || target == null || handler == null) {
+            abortStillFlashPrecapture("camera unavailable")
             return
         }
-
+        precaptureTimeoutRunnable?.let(handler::removeCallbacks)
+        pending.phase = phase
+        pending.triggerFrameNumber = null
+        pending.triggerSequenceId = null
+        pending.repeatingSequenceId = null
+        pending.firstResultFrameNumber = null
+        pending.lastResult = null
+        pending.aeReady = false
+        pending.afReady = !pending.triggerAf
         try {
-            val triggerRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(previewTarget)
-                set(
-                    CaptureRequest.CONTROL_CAPTURE_INTENT,
-                    CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW
-                )
-                applyBaseCameraSettings(
-                    builder = this,
-                    isCapture = false,
-                    useStillFlashAeMode = true,
-                    useStillFlashTrigger = true,
-                )
-                set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
-                set(CaptureRequest.CONTROL_AE_LOCK, false)
-                setAePrecaptureTriggerIfSupported(
-                    this,
-                    CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START,
-                )
-                setTag(PrecaptureRequestTag(generation))
-            }.build()
-
-            precaptureTriggerSubmitted = true
-            session.capture(triggerRequest, previewCallback, handler)
-            PLog.d(
-                TAG,
-                "Precapture trigger submitted: generation=$generation, " +
-                    "aeMode=${triggerRequest.get(CaptureRequest.CONTROL_AE_MODE)}, " +
-                    "flashMode=${triggerRequest.get(CaptureRequest.FLASH_MODE)}"
-            )
+            val repeating = buildStillFlashPreviewRequest(device, target, pending, isTrigger = false)
+            if (phase != StillFlashPhase.APPLYING_SESSION) {
+                val trigger = buildStillFlashPreviewRequest(device, target, pending, isTrigger = true)
+                pending.triggerSequenceId = session.capture(trigger, previewCallback, handler)
+            }
+            pending.repeatingSequenceId = session.setRepeatingRequest(repeating, previewCallback, handler)
+            val timeout = Runnable {
+                if (stillFlashPrecapture === pending && pending.phase == phase) {
+                    onStillFlashPhaseTimeout(pending, "time limit")
+                }
+            }
+            precaptureTimeoutRunnable = timeout
+            handler.postDelayed(timeout, PRECAPTURE_TIMEOUT_MS)
+            PLog.i(TAG, "Still flash phase submitted: generation=${pending.generation} phase=$phase " +
+                "afMode=${pending.afMode} triggerAf=${pending.triggerAf} " +
+                "aeMode=${repeating.get(CaptureRequest.CONTROL_AE_MODE)}")
         } catch (e: Exception) {
-            PLog.e(TAG, "Failed to submit precapture trigger", e)
-            completePrecapture(lastCaptureResult, "precapture trigger submission failed")
+            PLog.e(TAG, "Failed to submit still flash phase $phase", e)
+            abortStillFlashPrecapture("phase submission failed: $phase")
         }
+    }
+
+    private fun onStillFlashPhaseTimeout(pending: StillFlashPrecapture, reason: String) {
+        PLog.w(TAG, "Still flash wait expired: generation=${pending.generation} phase=${pending.phase} " +
+            "reason=$reason aeReady=${pending.aeReady} afReady=${pending.afReady}")
+        if (pending.lastResult == null) {
+            abortStillFlashPrecapture("no capture results for ${pending.phase}")
+            return
+        }
+        when (pending.phase) {
+            StillFlashPhase.APPLYING_SESSION -> abortStillFlashPrecapture("flash session did not apply")
+            StillFlashPhase.WAITING_AF_CONVERGENCE -> submitStillFlashPhase(pending, StillFlashPhase.WAITING_AE_AF)
+            StillFlashPhase.WAITING_AE_AF -> completePrecapture(pending.lastResult, reason)
+        }
+    }
+
+    private fun abortStillFlashPrecapture(reason: String) {
+        PLog.e(TAG, "Still flash preparation failed: $reason")
+        // The reserved shot has not been submitted; resetPreviewAfterCapture fails it and
+        // releases its buffers, AF ownership and pending capture references together.
+        resetPreviewAfterCapture()
     }
 
     /**
      * CameraX does not wait for an AF lock when continuous AF, manual focus, or an unknown AF
      * mode is active. For a one-shot AF mode it waits for one of the terminal AF states.
      */
-    private fun isFlashAfReady(result: CaptureResult): Boolean {
+    private fun isTorchWarmupAfReady(result: CaptureResult): Boolean {
         val afMode = result.get(CaptureResult.CONTROL_AF_MODE)
         if (afMode == null ||
             afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE ||
@@ -1422,22 +1471,17 @@ class Camera2Controller(private val context: Context) {
     }
 
     private fun completePrecapture(result: CaptureResult?, reason: String) {
-        if (internalCaptureState != STATE_WAITING_PRECAPTURE &&
-            internalCaptureState != STATE_WAITING_NON_PRECAPTURE
-        ) {
-            return
-        }
-
-        val generation = activePrecaptureGeneration
+        val pending = stillFlashPrecapture ?: return
         pendingCaptureBaseExposureResult = result ?: pendingCaptureBaseExposureResult
-        internalCaptureState = STATE_PICTURE_TAKEN
         clearPrecaptureTracking()
         PLog.i(
             TAG,
-            "Precapture complete: generation=$generation, reason=$reason, " +
-                "aeState=${result?.get(CaptureResult.CONTROL_AE_STATE)}, " +
-                "iso=${result?.get(CaptureResult.SENSOR_SENSITIVITY)}, " +
-                "shutter=${result?.get(CaptureResult.SENSOR_EXPOSURE_TIME)}"
+            "Precapture complete: generation=${pending.generation}, reason=$reason, " +
+                "aeReady=${pending.aeReady} afReady=${pending.afReady} " +
+                "ae=${result?.get(CaptureResult.CONTROL_AE_STATE)} " +
+                "af=${result?.get(CaptureResult.CONTROL_AF_STATE)} " +
+                "iso=${result?.get(CaptureResult.SENSOR_SENSITIVITY)} " +
+                "shutter=${result?.get(CaptureResult.SENSOR_EXPOSURE_TIME)}",
         )
         runCaptureSequence()
     }
@@ -1445,10 +1489,7 @@ class Camera2Controller(private val context: Context) {
     private fun clearPrecaptureTracking() {
         precaptureTimeoutRunnable?.let { cameraHandler?.removeCallbacks(it) }
         precaptureTimeoutRunnable = null
-        activePrecaptureGeneration = 0L
-        precaptureTriggerFrameNumber = null
-        precaptureTriggerSubmitted = false
-        precaptureTriggerResultSeen = false
+        stillFlashPrecapture = null
     }
 
     private fun processMultiFrameTorchWarmupState(
@@ -1558,7 +1599,7 @@ class Camera2Controller(private val context: Context) {
             aeState == CaptureResult.CONTROL_AE_STATE_LOCKED
         val awbState = result.get(CaptureResult.CONTROL_AWB_STATE)
         val awbReady = awbState == null || awbState == CaptureResult.CONTROL_AWB_STATE_CONVERGED
-        return aeReady && awbReady && isFlashAfReady(result)
+        return aeReady && awbReady && isTorchWarmupAfReady(result)
     }
 
     private fun completeMultiFrameTorchWarmup(
@@ -1708,84 +1749,27 @@ class Camera2Controller(private val context: Context) {
      * 运行预取序列（预闪）
      */
     private fun runPrecaptureSequence() {
-        val session = captureSession
-        val device = cameraDevice
-        val previewTarget = previewSurface
-        val handler = cameraHandler
-        if (session == null || device == null || previewTarget == null || handler == null) {
-            PLog.w(TAG, "Precapture unavailable, proceeding directly to capture")
-            internalCaptureState = STATE_PICTURE_TAKEN
-            clearPrecaptureTracking()
-            runCaptureSequence()
-            return
+        val state = activePhotoCapture?.state ?: _state.value
+        stillFlashCaptureState = state
+        val afMode = if (state.isAutoFocus) {
+            previewRequestBuilder?.get(CaptureRequest.CONTROL_AF_MODE)
+                ?: resolveAutoFocusMode(state.captureMode)
+        } else {
+            CaptureRequest.CONTROL_AF_MODE_OFF
         }
-
-        val generation = ++precaptureGeneration
-        activePrecaptureGeneration = generation
-        precaptureTriggerFrameNumber = null
-        lastAeState = null
-        precaptureTriggerSubmitted = false
-        precaptureTriggerResultSeen = false
-
-        try {
-            // CameraX first applies the flash AE mode to the repeating session and waits for
-            // that session update to be observed before issuing the one-shot AE precapture
-            // trigger. This ordering is required on devices whose AE state machine ignores a
-            // trigger that arrives in the same transition as the flash-mode change.
-            val sessionUpdateRequest =
-                device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                    addTarget(previewTarget)
-                    set(
-                        CaptureRequest.CONTROL_CAPTURE_INTENT,
-                        CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW
-                    )
-                    applyBaseCameraSettings(
-                        builder = this,
-                        isCapture = false,
-                        useStillFlashAeMode = true,
-                        useStillFlashTrigger = false,
-                    )
-                    set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
-                    set(CaptureRequest.CONTROL_AE_LOCK, false)
-                    setAePrecaptureTriggerIfSupported(
-                        this,
-                        CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE,
-                    )
-                    setTag(PrecaptureSessionUpdateTag(generation))
-                }.build()
-
-            internalCaptureState = STATE_WAITING_PRECAPTURE
-            session.setRepeatingRequest(sessionUpdateRequest, previewCallback, handler)
-
-            val timeout = Runnable {
-                if (activePrecaptureGeneration != generation ||
-                    (internalCaptureState != STATE_WAITING_PRECAPTURE &&
-                        internalCaptureState != STATE_WAITING_NON_PRECAPTURE)
-                ) {
-                    return@Runnable
-                }
-                PLog.w(
-                    TAG,
-                    "Precapture timeout: generation=$generation, " +
-                        "triggerSubmitted=$precaptureTriggerSubmitted, " +
-                        "triggerFrame=$precaptureTriggerFrameNumber, lastAeState=$lastAeState"
-                )
-                completePrecapture(lastCaptureResult, "timeout")
-            }
-            precaptureTimeoutRunnable = timeout
-            handler.postDelayed(timeout, PRECAPTURE_TIMEOUT_MS)
-            PLog.d(
-                TAG,
-                "Flash session update submitted: generation=$generation, " +
-                    "aeMode=${sessionUpdateRequest.get(CaptureRequest.CONTROL_AE_MODE)}, " +
-                    "flashMode=${sessionUpdateRequest.get(CaptureRequest.FLASH_MODE)}"
-            )
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to run precapture sequence", e)
-            internalCaptureState = STATE_PICTURE_TAKEN
-            clearPrecaptureTracking()
-            runCaptureSequence()
+        val triggerAf = state.isAutoFocus && supportsAfTrigger(afMode) &&
+            isCaptureRequestKeyAvailable(CaptureRequest.CONTROL_AF_TRIGGER.name)
+        val pending = StillFlashPrecapture(++precaptureGeneration, afMode, triggerAf)
+        stillFlashPrecapture = pending
+        stillFlashAfMode = afMode
+        stillFlashFocusDistance = if (afMode == CaptureRequest.CONTROL_AF_MODE_OFF) {
+            previewRequestBuilder?.get(CaptureRequest.LENS_FOCUS_DISTANCE)
+                ?: resolveValidFocusDistance(pendingCaptureBaseExposureResult, state)
+        } else {
+            null
         }
+        isCaptureFocusFrozen = true
+        submitStillFlashPhase(pending, StillFlashPhase.APPLYING_SESSION)
     }
 
     // ==================== 初始化 ====================
@@ -2058,11 +2042,10 @@ class Camera2Controller(private val context: Context) {
         clearMultiFrameTorchWarmupTracking()
         isMultiFrameTorchCaptureActive = false
         isContinuousBurstTorchActive = false
-        internalCaptureState = STATE_PREVIEW
         pendingCaptureDevice = null
         pendingCaptureReader = null
         pendingCaptureBaseExposureResult = null
-        clearMultiFrameFocusState("session cleared: $reason")
+        clearCaptureFocusState("session cleared: $reason")
         safeCloseCaptureSession(captureSession, reason)
         captureSession = null
         previewRequestBuilder = null
@@ -3754,9 +3737,10 @@ class Camera2Controller(private val context: Context) {
      * @param builder 需要配置的 Builder
      * @param isCapture 是否为拍摄请求（预览时某些参数有限制）
      * @param isRawCapture 是否为 RAW 拍摄请求（跳过 RAW 不需要的 ISP 后处理参数）
-     * @param useStillFlashAeMode 是否强制进入静态拍摄的闪光 AE 流程；自动闪光预览在设备支持
-     * ON_ALWAYS_FLASH 时也会使用同一 AE 模式，以便后续预闪与 CameraX 的会话更新顺序一致
+     * @param useStillFlashAeMode 是否强制进入静态拍摄的闪光 AE 流程；全自动曝光下的强制闪光预览在设备支持
+     * ON_ALWAYS_FLASH 时也会使用同一 AE 模式，预闪和主闪由同一闪光 AE 流程控制
      * @param useStillFlashTrigger 是否允许当前请求本身触发 SINGLE 闪光；会话更新和预览请求必须关闭
+     * @param currentState 本次请求使用的设置；单帧闪光从预闪到主闪使用快门按下时的快照
      */
     private fun applyBaseCameraSettings(
         builder: CaptureRequest.Builder,
@@ -3765,9 +3749,8 @@ class Camera2Controller(private val context: Context) {
         disableZslForHdrCapture: Boolean = false,
         useStillFlashAeMode: Boolean = isCapture,
         useStillFlashTrigger: Boolean = isCapture,
+        currentState: CameraState = _state.value,
     ) {
-        val currentState = _state.value
-
         // 1. 曝光设置
         applyExposureSettings(
             builder = builder,
@@ -4189,12 +4172,17 @@ class Camera2Controller(private val context: Context) {
     private fun applyFrozenCaptureFocus(builder: CaptureRequest.Builder): Boolean {
         if (!isCaptureFocusFrozen) return false
         val snapshot = activeMultiFrameFocusSnapshot
-        val afMode = snapshot?.afMode ?: multiFrameAfTriggerMode ?: return false
+        val afMode = stillFlashAfMode ?: snapshot?.afMode ?: multiFrameAfTriggerMode ?: return false
         builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
         builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
         builder.set(CaptureRequest.CONTROL_AF_MODE, afMode)
         if (afMode == CaptureRequest.CONTROL_AF_MODE_OFF) {
-            snapshot?.focusDistanceDiopters?.let { builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, it) }
+            val focusDistance = if (stillFlashCaptureState != null) {
+                stillFlashFocusDistance
+            } else {
+                snapshot?.focusDistanceDiopters
+            }
+            focusDistance?.let { builder.set(CaptureRequest.LENS_FOCUS_DISTANCE, it) }
         }
         return true
     }
@@ -5901,6 +5889,10 @@ class Camera2Controller(private val context: Context) {
             return
         }
 
+        // The flash sequence owns repeating requests until the still capture is finished.
+        // Parameter setters may update the preview builder; apply them when restoring preview.
+        if (stillFlashCaptureState != null) return
+
         // 检查相机和会话是否仍然有效，避免在相机关闭后的回调中调用 setRepeatingRequest。
         val device = cameraDevice
         val session = captureSession
@@ -7531,7 +7523,6 @@ class Camera2Controller(private val context: Context) {
             PLog.d(TAG, "Starting multi-frame torch warm-up")
             runMultiFrameTorchWarmupSequence { torchResult ->
                 pendingCaptureBaseExposureResult = torchResult ?: pendingCaptureBaseExposureResult
-                internalCaptureState = STATE_PICTURE_TAKEN
                 runCaptureSequence()
             }
         } else if (needsPrecapture) {
@@ -8170,7 +8161,7 @@ class Camera2Controller(private val context: Context) {
     ) {
         try {
             val isRawCapture = isRawCaptureReader(reader)
-            val currentState = _state.value
+            val currentState = stillFlashCaptureState ?: _state.value
             val useMultiFrameTorch = isMultiFrameTorchCaptureActive
             if (shouldUseJpgMaxHdrCapture(currentState, isRawCapture)) {
                 val session = captureSession ?: run {
@@ -8206,7 +8197,12 @@ class Camera2Controller(private val context: Context) {
 
                 // 应用所有相机参数（曝光、白平衡、闪光灯、变焦）
                 // isCapture = true 确保使用完整的曝光时间（不限制长曝光）
-                applyBaseCameraSettings(this, isCapture = true, isRawCapture = isRawCapture)
+                applyBaseCameraSettings(
+                    this,
+                    isCapture = true,
+                    isRawCapture = isRawCapture,
+                    currentState = currentState,
+                )
 
                 // A previous multi-frame/torch sequence may have used AE_LOCK. Standard
                 // single-frame flash capture must let the flash AE routine choose exposure.
@@ -8264,6 +8260,9 @@ class Camera2Controller(private val context: Context) {
                         set(CaptureRequest.CONTROL_AE_REGIONS, it)
                     }
                 }
+
+                // Keep the AF mode that received START throughout the flash exposure.
+                applyFrozenCaptureFocus(this)
 
                 applyMultiFrameCaptureConsistency(
                     builder = this,
@@ -8401,7 +8400,6 @@ class Camera2Controller(private val context: Context) {
         clearMultiFrameTorchWarmupTracking()
         isMultiFrameTorchCaptureActive = false
         isContinuousBurstTorchActive = false
-        internalCaptureState = STATE_PREVIEW
         pendingCaptureDevice = null
         pendingCaptureReader = null
         pendingCaptureBaseExposureResult = null
@@ -8410,11 +8408,13 @@ class Camera2Controller(private val context: Context) {
         val device = cameraDevice
         val session = captureSession
         val builder = previewRequestBuilder
-        val afTriggerModeToCancel = multiFrameAfTriggerMode
+        val afTriggerModeToCancel = stillFlashAfMode?.takeIf {
+            supportsAfTrigger(it) && isCaptureRequestKeyAvailable(CaptureRequest.CONTROL_AF_TRIGGER.name)
+        } ?: multiFrameAfTriggerMode
 
         if (device == null || session == null || builder == null) {
             PLog.v(TAG, "resetPreviewAfterCapture: camera not ready, skipping")
-            clearMultiFrameFocusState("preview unavailable after capture")
+            clearCaptureFocusState("preview unavailable after capture")
             return
         }
 
@@ -8434,7 +8434,7 @@ class Camera2Controller(private val context: Context) {
             // CaptureResult metadata; otherwise the stabilizer must emit an identity-pose frame.
             session.capture(builder.build(), previewCallback, cameraHandler)
 
-            clearMultiFrameFocusState("capture sequence finished")
+            clearCaptureFocusState("capture sequence finished")
             applyBaseCameraSettings(builder, isCapture = false)
             builder.set(CaptureRequest.CONTROL_AE_LOCK, false)
             builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
@@ -8447,11 +8447,11 @@ class Camera2Controller(private val context: Context) {
                 "previewAfMode=${builder.get(CaptureRequest.CONTROL_AF_MODE)}")
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to reset preview", e)
-            clearMultiFrameFocusState("preview reset failure")
+            clearCaptureFocusState("preview reset failure")
         }
     }
 
-    private fun clearMultiFrameFocusState(reason: String) {
+    private fun clearCaptureFocusState(reason: String) {
         val hadFocusState = isCaptureFocusFrozen ||
             pendingMultiFrameFocusCapture != null ||
             activeMultiFrameFocusSnapshot != null ||
@@ -8460,9 +8460,12 @@ class Camera2Controller(private val context: Context) {
         clearPendingMultiFrameFocusPreparation()
         activeMultiFrameFocusSnapshot = null
         multiFrameAfTriggerMode = null
+        stillFlashAfMode = null
+        stillFlashFocusDistance = null
+        stillFlashCaptureState = null
         isCaptureFocusFrozen = false
         if (hadFocusState) {
-            PLog.i(TAG, "Multi-frame focus state released: reason=$reason")
+            PLog.i(TAG, "Capture focus state released: reason=$reason")
         }
     }
 
