@@ -1343,15 +1343,33 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
+    private fun createPhotoPreparationRequestBuilder(device: CameraDevice): CaptureRequest.Builder {
+        val previewTarget = checkNotNull(previewSurface) {
+            "Preview surface unavailable for photo preparation"
+        }
+        val stabilizationTarget = if (shouldUseAlgorithmicStabilization()) {
+            checkNotNull(stabilizationImageReader) {
+                "Stabilization reader unavailable for photo preparation"
+            }.surface
+        } else {
+            null
+        }
+        return device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            // Preserve the configured preview outputs, including the EIS YUV reader. Both
+            // repeating and trigger requests must keep feeding it through previewCallback
+            // so each stabilization image has matching CaptureResult metadata.
+            addTarget(previewTarget)
+            stabilizationTarget?.let(::addTarget)
+        }
+    }
+
     private fun buildStillFlashPreviewRequest(
         device: CameraDevice,
-        target: Surface,
         pending: StillFlashPrecapture,
         isTrigger: Boolean,
     ): CaptureRequest {
         val triggerAe = isTrigger && pending.phase == StillFlashPhase.WAITING_AE_AF
-        return device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-            addTarget(target)
+        return createPhotoPreparationRequestBuilder(device).apply {
             applyBaseCameraSettings(
                 builder = this,
                 isCapture = false,
@@ -1387,9 +1405,8 @@ class Camera2Controller(private val context: Context) {
         if (stillFlashPrecapture !== pending) return
         val session = captureSession
         val device = cameraDevice
-        val target = previewSurface
         val handler = cameraHandler
-        if (session == null || device == null || target == null || handler == null) {
+        if (session == null || device == null || previewSurface == null || handler == null) {
             abortStillFlashPrecapture("camera unavailable")
             return
         }
@@ -1403,9 +1420,9 @@ class Camera2Controller(private val context: Context) {
         pending.aeReady = false
         pending.afReady = !pending.triggerAf
         try {
-            val repeating = buildStillFlashPreviewRequest(device, target, pending, isTrigger = false)
+            val repeating = buildStillFlashPreviewRequest(device, pending, isTrigger = false)
             if (phase != StillFlashPhase.APPLYING_SESSION) {
-                val trigger = buildStillFlashPreviewRequest(device, target, pending, isTrigger = true)
+                val trigger = buildStillFlashPreviewRequest(device, pending, isTrigger = true)
                 pending.triggerSequenceId = session.capture(trigger, previewCallback, handler)
             }
             pending.repeatingSequenceId = session.setRepeatingRequest(repeating, previewCallback, handler)
@@ -1418,7 +1435,8 @@ class Camera2Controller(private val context: Context) {
             handler.postDelayed(timeout, PRECAPTURE_TIMEOUT_MS)
             PLog.i(TAG, "Still flash phase submitted: generation=${pending.generation} phase=$phase " +
                 "afMode=${pending.afMode} triggerAf=${pending.triggerAf} " +
-                "aeMode=${repeating.get(CaptureRequest.CONTROL_AE_MODE)}")
+                "aeMode=${repeating.get(CaptureRequest.CONTROL_AE_MODE)} " +
+                "stabilizationTarget=${shouldUseAlgorithmicStabilization()}")
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to submit still flash phase $phase", e)
             abortStillFlashPrecapture("phase submission failed: $phase")
@@ -1542,16 +1560,14 @@ class Camera2Controller(private val context: Context) {
 
         val session = captureSession
         val device = cameraDevice
-        val previewTarget = previewSurface
         val handler = cameraHandler
-        if (session == null || device == null || previewTarget == null || handler == null) {
+        if (session == null || device == null || previewSurface == null || handler == null) {
             completeMultiFrameTorchWarmup(lastMultiFrameTorchWarmupResult, "torch precapture unavailable")
             return
         }
 
         try {
-            val triggerRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(previewTarget)
+            val triggerRequest = createPhotoPreparationRequestBuilder(device).apply {
                 set(
                     CaptureRequest.CONTROL_CAPTURE_INTENT,
                     CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW
@@ -1583,7 +1599,8 @@ class Camera2Controller(private val context: Context) {
             PLog.d(
                 TAG,
                 "Multi-frame torch precapture submitted: generation=$generation, " +
-                    "aeMode=${triggerRequest.get(CaptureRequest.CONTROL_AE_MODE)}"
+                    "aeMode=${triggerRequest.get(CaptureRequest.CONTROL_AE_MODE)}, " +
+                    "stabilizationTarget=${shouldUseAlgorithmicStabilization()}"
             )
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to submit multi-frame torch precapture", e)
@@ -1678,9 +1695,8 @@ class Camera2Controller(private val context: Context) {
     ) {
         val session = captureSession
         val device = cameraDevice
-        val previewTarget = previewSurface
         val handler = cameraHandler
-        if (session == null || device == null || previewTarget == null || handler == null) {
+        if (session == null || device == null || previewSurface == null || handler == null) {
             abortMultiFrameTorchWarmup("camera session unavailable")
             return
         }
@@ -1693,8 +1709,7 @@ class Camera2Controller(private val context: Context) {
         multiFrameTorchWarmupTriggerResultSeen = false
 
         try {
-            val torchRequestBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(previewTarget)
+            val torchRequestBuilder = createPhotoPreparationRequestBuilder(device).apply {
                 set(
                     CaptureRequest.CONTROL_CAPTURE_INTENT,
                     CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW
@@ -1738,7 +1753,8 @@ class Camera2Controller(private val context: Context) {
                 TAG,
                 "Multi-frame torch warm-up started: generation=$generation, " +
                     "aeMode=${torchRequest.get(CaptureRequest.CONTROL_AE_MODE)}, " +
-                    "flashMode=${torchRequest.get(CaptureRequest.FLASH_MODE)}"
+                    "flashMode=${torchRequest.get(CaptureRequest.FLASH_MODE)}, " +
+                    "stabilizationTarget=${shouldUseAlgorithmicStabilization()}"
             )
         } catch (e: Exception) {
             abortMultiFrameTorchWarmup("request submission", e)
