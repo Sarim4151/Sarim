@@ -18,22 +18,31 @@ class MgcSabreNoiseEstimatesLutTest {
     }
 
     @Test
-    fun qmcTransformMatchesReversedMgcReferenceValues() {
+    fun qmcTransformMatchesV25SequenceReplay() {
         assertEquals(
-            0.0012591606f,
+            0.00124777935f,
             MgcSabreNoiseEstimatesLut.sqrtDomainVariance(0f, 0.001f, 0.00001f),
             1e-8f,
         )
         assertEquals(
-            0.00025654092f,
+            0.00025717527f,
             MgcSabreNoiseEstimatesLut.sqrtDomainVariance(0.5f, 0.001f, 0.00001f),
             1e-8f,
         )
         assertEquals(
-            0.00024920312f,
+            0.00024950321f,
             MgcSabreNoiseEstimatesLut.sqrtDomainVariance(1f, 0.001f, 0.00001f),
             1e-8f,
         )
+    }
+
+    @Test
+    fun qmcAnglesFollowV25FilledMaskRecurrence() {
+        val expected = longArrayOf(0, 0x80000000, 0xc0000000, 0x40000000,
+            0xe0000000, 0x60000000, 0x20000000, 0xa0000000)
+        expected.forEachIndexed { index, bits ->
+            assertEquals(bits, MgcSabreNoiseEstimatesLut.qmcAngleBits(index).toLong())
+        }
     }
 
     @Test
@@ -92,7 +101,7 @@ class MgcSabreNoiseEstimatesLutTest {
     }
 
     @Test
-    fun mergedNoiseFactorUsesActualGreenRbfWeightsInQ8Domain() {
+    fun diagnosticMergeFactorUsesActualGreenRbfWeightsInQ8Domain() {
         val shader = GlesMgcRawSabreShaders.reciprocalGreenWeight4x4
 
         assertTrue(shader.contains("texelFetch(uAccumulatedWeightsGb, p, 0).r"))

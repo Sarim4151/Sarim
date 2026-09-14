@@ -16,11 +16,11 @@ internal object MgcSpatialMergeTuning {
     }
 
     /**
-     * Evaluates the representative SNR of Spatial's propagated output NoiseModel.
+     * Evaluates the representative SNR of the propagated Spatial or Sabre output NoiseModel.
      *
      * This mirrors MGC V25 NoiseModel::EstimateSnr for the normalized signal path: use the
-     * green channel (index 1), whose read/shot coefficients already include the actual AOT
-     * alignment/rejection weights and output-exposure transport.
+     * green channel (index 1), whose read/shot coefficients already include the selected
+     * merge branch's model composition and output-exposure transport.
      */
     fun outputNoiseModelSnr(
         signal: Float,

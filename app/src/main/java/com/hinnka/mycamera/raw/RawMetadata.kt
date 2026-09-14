@@ -180,18 +180,16 @@ data class RawMetadata(
     val sensorPixelArrayHeight: Int = 0,
     val frameCount: Int = 1,
     /**
-     * MGC's normalized 128-bin power-correlation spectrum after spatial merge.
+     * MGC's normalized 128-bin power-correlation spectrum after the selected MGC merge branch.
      * Null means either a single uncorrelated source or an unsupported propagated model.
      */
     val mgcDenoiseCorrelation: FloatArray? = null,
-    /** Exact process-local normalized camera-RGB read variance emitted by MGC Spatial. */
+    /** Process-local normalized camera-RGB read variance emitted by the selected MGC merge branch. */
     val mgcDenoiseReadNoise: FloatArray? = null,
-    /** Exact process-local normalized camera-RGB shot coefficient emitted by MGC Spatial. */
+    /** Process-local normalized camera-RGB shot coefficient emitted by the selected MGC merge branch. */
     val mgcDenoiseShotNoise: FloatArray? = null,
     /** Exact process-local Q8 Spatial variance multiplier; never serialized into DNG. */
     val mgcSpatialStrengthMap: MgcSpatialStrengthMap? = null,
-    /** Sabre's process-local NoiseModel scale measured from accumulated Q8 green merge weights. */
-    val mgcSabreNoiseModelScale: Float? = null,
     /** Merged output-frame SNR used by MGC FinishRaw to select luma/chroma tuning. */
     val mgcDenoiseTuningSnr: Float? = null,
     /** MGC-derived attenuation applied to Photon's final GLES sharpen strength. */
@@ -1219,7 +1217,6 @@ data class RawMetadata(
             if (!mgcDenoiseShotNoise.contentEquals(other.mgcDenoiseShotNoise)) return false
         } else if (other.mgcDenoiseShotNoise != null) return false
         if (mgcSpatialStrengthMap != other.mgcSpatialStrengthMap) return false
-        if (mgcSabreNoiseModelScale != other.mgcSabreNoiseModelScale) return false
         if (mgcDenoiseTuningSnr != other.mgcDenoiseTuningSnr) return false
         if (mgcSharpenAttenuationScale != other.mgcSharpenAttenuationScale) return false
         if (coreImagingTuning != other.coreImagingTuning) return false
@@ -1258,7 +1255,6 @@ data class RawMetadata(
         result = 31 * result + (mgcDenoiseReadNoise?.contentHashCode() ?: 0)
         result = 31 * result + (mgcDenoiseShotNoise?.contentHashCode() ?: 0)
         result = 31 * result + (mgcSpatialStrengthMap?.hashCode() ?: 0)
-        result = 31 * result + (mgcSabreNoiseModelScale?.hashCode() ?: 0)
         result = 31 * result + (mgcDenoiseTuningSnr?.hashCode() ?: 0)
         result = 31 * result + (mgcSharpenAttenuationScale?.hashCode() ?: 0)
         result = 31 * result + coreImagingTuning.hashCode()

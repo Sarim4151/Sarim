@@ -13,9 +13,6 @@
 namespace {
 
 constexpr char kTag[] = "PLog_MgcSpatialStrength";
-constexpr float kIdentityMultiplier = 1.0f;
-constexpr float kIdentityReadNoise = 0.0f;
-constexpr float kIdentityShotNoise = 1.0f;
 
 bool CopyFloatArray(
     JNIEnv* env,
@@ -35,44 +32,6 @@ bool IsValidNoisePair(float read, float shot) {
     return std::isfinite(read) && read >= 0.0f &&
         std::isfinite(shot) && shot >= 0.0f &&
         (read > 0.0f || shot > 0.0f);
-}
-
-int SanitizeNoiseParameters(
-    int frame_count,
-    std::vector<float>* read,
-    std::vector<float>* shot) {
-    int replacement_count = 0;
-    for (int channel = 0; channel < 3; ++channel) {
-        const int channel_offset = channel * frame_count;
-        float identity_read = kIdentityReadNoise;
-        float identity_shot = kIdentityShotNoise;
-        for (int frame = 0; frame < frame_count; ++frame) {
-            const int index = channel_offset + frame;
-            if (IsValidNoisePair((*read)[index], (*shot)[index])) {
-                identity_read = (*read)[index];
-                identity_shot = (*shot)[index];
-                break;
-            }
-        }
-        for (int frame = 0; frame < frame_count; ++frame) {
-            const int index = channel_offset + frame;
-            if (IsValidNoisePair((*read)[index], (*shot)[index])) continue;
-            (*read)[index] = identity_read;
-            (*shot)[index] = identity_shot;
-            ++replacement_count;
-        }
-    }
-    return replacement_count;
-}
-
-int SanitizePositiveMultipliers(std::vector<float>* values) {
-    int replacement_count = 0;
-    for (float& value : *values) {
-        if (std::isfinite(value) && value > 0.0f) continue;
-        value = kIdentityMultiplier;
-        ++replacement_count;
-    }
-    return replacement_count;
 }
 
 }  // namespace
@@ -178,32 +137,46 @@ Java_com_hinnka_mycamera_processor_MgcSpatialStrengthMapGenerator_nativeCompute(
                 &kernel_sigmas)) {
             return -1;
         }
-        const int noise_replacements = SanitizeNoiseParameters(
-            frame_count,
-            &input_read_noise,
-            &input_shot_noise);
-        const int frame_weight_replacements =
-            SanitizePositiveMultipliers(&frame_weights);
-        const int kernel_sigma_replacements =
-            SanitizePositiveMultipliers(&kernel_sigmas);
-        const bool rejected_multiplier_replaced =
-            !std::isfinite(rejected_denoise_multiplier) ||
-            rejected_denoise_multiplier <= 0.0f;
-        if (rejected_multiplier_replaced) {
-            rejected_denoise_multiplier = kIdentityMultiplier;
-        }
-        if (noise_replacements > 0 || frame_weight_replacements > 0 ||
-            kernel_sigma_replacements > 0 || rejected_multiplier_replaced) {
+        // These are the same calibrated parameters used to merge the image. Replacing
+        // an invalid frame/channel with another model would describe different pixels.
+        for (size_t index = 0; index < input_read_noise.size(); ++index) {
+            if (IsValidNoisePair(input_read_noise[index], input_shot_noise[index])) {
+                continue;
+            }
             __android_log_print(
-                ANDROID_LOG_WARN,
+                ANDROID_LOG_ERROR,
                 kTag,
-                "MGC Spatial strength replaced invalid inputs with identity "
-                "noisePairs=%d frameWeights=%d kernelSigmas=%d "
-                "rejectedMultiplier=%d",
-                noise_replacements,
-                frame_weight_replacements,
-                kernel_sigma_replacements,
-                rejected_multiplier_replaced ? 1 : 0);
+                "MGC Spatial strength rejected noise input channel=%zu frame=%zu "
+                "read=%.6g shot=%.6g",
+                index / frame_count,
+                index % frame_count,
+                input_read_noise[index],
+                input_shot_noise[index]);
+            return -1;
+        }
+        for (int frame = 0; frame < frame_count; ++frame) {
+            if (std::isfinite(frame_weights[frame]) && frame_weights[frame] > 0.0f &&
+                std::isfinite(kernel_sigmas[frame]) && kernel_sigmas[frame] > 0.0f) {
+                continue;
+            }
+            __android_log_print(
+                ANDROID_LOG_ERROR,
+                kTag,
+                "MGC Spatial strength rejected merge input frame=%d "
+                "frameWeight=%.6g kernelSigma=%.6g",
+                frame,
+                frame_weights[frame],
+                kernel_sigmas[frame]);
+            return -1;
+        }
+        if (!std::isfinite(rejected_denoise_multiplier) ||
+            rejected_denoise_multiplier <= 0.0f) {
+            __android_log_print(
+                ANDROID_LOG_ERROR,
+                kTag,
+                "MGC Spatial strength rejected denoise multiplier=%.6g",
+                rejected_denoise_multiplier);
+            return -1;
         }
         std::vector<uint16_t> output(static_cast<size_t>(output_values));
         photon::mgc_denoise::SpatialStrengthResult diagnostics;

@@ -496,6 +496,17 @@ float DownsamplingEnergy(
 bool AdvancePyramidCorrelation(
     float spectrum[128],
     float* coefficient_scale) {
+    // Zero spectral amplitude represents zero noise energy, which has no
+    // identifiable normalized spectrum. Carry that energy in the coefficients
+    // and use the canonical unit spectrum for subsequent pyramid levels.
+    // In particular, do not divide by zero or invent a positive noise floor.
+    if (std::all_of(spectrum, spectrum + 128, [](float value) {
+            return value == 0.0f;
+        })) {
+        std::fill_n(spectrum, 128, 1.0f);
+        *coefficient_scale = 0.0f;
+        return true;
+    }
     // MGC's fixed eight-tap filter at 0x6b20e0/0x6b6200.
     constexpr float filter[8] = {
         -3.0f / 128.0f,

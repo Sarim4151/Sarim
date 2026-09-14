@@ -3440,8 +3440,6 @@ object GalleryManager {
                 mgcDenoiseReadNoise = finalStackResult.mgcDenoiseReadNoise,
                 mgcDenoiseShotNoise = finalStackResult.mgcDenoiseShotNoise,
                 mgcSpatialStrengthMap = finalStackResult.mgcSpatialStrengthMap,
-                mgcSabreNoiseModelScale =
-                    finalStackResult.mgcSabreNoiseModelScale,
                 mgcDenoiseTuningSnr = finalStackResult.mgcDenoiseTuningSnr,
                 mgcSharpenAttenuationScale =
                     finalStackResult.mgcSharpenAttenuationScale,
@@ -3465,9 +3463,9 @@ object GalleryManager {
             }
             val defaultDenoiseModelAvailable = when (defaultDenoiseMode) {
                 MgcSpatialGpuDenoiseMode.SABRE_DEFAULT ->
-                    finalStackResult.mgcSabreNoiseModelScale?.let {
-                        it.isFinite() && it > 0f
-                    } == true
+                    finalStackResult.mgcDenoiseCorrelation?.size == 128 &&
+                        finalStackResult.mgcDenoiseReadNoise?.size == 3 &&
+                        finalStackResult.mgcDenoiseShotNoise?.size == 3
                 MgcSpatialGpuDenoiseMode.SPATIAL_DEFAULT ->
                     MultiFrameConfig.ENABLE_MGC_SPATIAL_DEFAULT_DENOISE &&
                         !finalStackResult.mgcSpatialReferenceOnlyDiagnostic &&
@@ -3543,7 +3541,6 @@ object GalleryManager {
                 mgcDenoiseReadNoise = null,
                 mgcDenoiseShotNoise = null,
                 mgcSpatialStrengthMap = null,
-                mgcSabreNoiseModelScale = null,
                 mgcDenoiseTuningSnr = null,
             )
 

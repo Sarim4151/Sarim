@@ -117,18 +117,17 @@ data class RawStackResult(
     val lensShadingCorrectionApplied: Boolean = false,
     val mergedFrameCount: Int = 1,
     /**
-     * MGC's normalized 128-bin spatial-merge correlation spectrum.
+     * MGC's normalized 128-bin merged NoiseModel correlation spectrum.
      *
-     * Null means that the exact propagated model is unavailable and the default Spatial denoise
-     * pass must be bypassed.
+     * Null means the merged model is unavailable; a requested default merge-denoise pass must fail.
      */
     val mgcDenoiseCorrelation: FloatArray? = null,
     /**
-     * Exact normalized camera-RGB read variance emitted by MGC Spatial.
+     * Normalized camera-RGB read variance emitted by the selected MGC merge branch.
      */
     val mgcDenoiseReadNoise: FloatArray? = null,
     /**
-     * Exact normalized camera-RGB shot coefficient emitted by MGC Spatial.
+     * Normalized camera-RGB shot coefficient emitted by the selected MGC merge branch.
      */
     val mgcDenoiseShotNoise: FloatArray? = null,
     /**
@@ -136,12 +135,6 @@ data class RawStackResult(
      * DNG write.
      */
     val mgcSpatialStrengthMap: MgcSpatialStrengthMap? = null,
-    /**
-     * Process-local Sabre NoiseModel coefficient scale measured from accumulated Q8 green merge
-     * weights. V25 does not apply a second reference-SNR lookup-table scale after
-     * GetMergedNoiseModel.
-     */
-    val mgcSabreNoiseModelScale: Float? = null,
     /**
      * Merged output-frame SNR used by MGC FinishRaw to select luma/chroma tuning.
      * This is the linear signal-domain SNR, not ISO or sensor gain.

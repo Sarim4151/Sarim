@@ -40,7 +40,9 @@ struct SpatialStrengthResult {
 /**
  * Reproduces CreateLumaDenoiseNoiseBuffers for one luma noise channel.
  * correlation is MGC's 128-bin normalized power correlation spectrum.  A
- * single uncorrelated frame is represented by 128 ones.
+ * single uncorrelated frame is represented by 128 ones. A uniformly scaled
+ * spectrum contributes the square of that scale to the separable 2D noise
+ * energy; an all-zero spectrum therefore produces zero noise at every level.
  */
 bool BuildNoiseBuffers(
     float read_noise,
