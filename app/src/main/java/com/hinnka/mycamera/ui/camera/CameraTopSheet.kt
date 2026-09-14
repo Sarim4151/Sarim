@@ -145,8 +145,11 @@ fun CameraTopSheet(
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
                 .background(Color.Black.copy(alpha = 0.8f))
-                .padding(top = contentTopPadding, bottom = 0.dp, start = 24.dp, end = 24.dp)
-                .autoRotate()
+                // Keep the screen's top inset fixed, but measure content and side padding
+                // in the rotated viewport so landscape controls stay inside the sheet.
+                .padding(top = contentTopPadding)
+                .autoRotate(matchParentSize = true)
+                .padding(horizontal = 24.dp)
         ) {
             Column(
                 modifier = Modifier
