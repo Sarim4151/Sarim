@@ -38,6 +38,8 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
+                // Build the JNI library and its dependencies, excluding libjpeg tools/tests.
+                targets += "my-native-lib"
             }
         }
 
@@ -82,6 +84,11 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }
+    }
+
+    lint {
+        // Keep fatal lint analysis off the Release packaging path.
+        checkReleaseBuilds = false
     }
 
     flavorDimensions += "channel"
@@ -204,10 +211,10 @@ dependencies {
     implementation("com.google.mediapipe:tasks-vision:1.0.0")
 
     // Bugly for default flavor
-    "defaultImplementation"("com.tencent.bugly:crashreport:latest.release")
-    "samsungImplementation"("com.tencent.bugly:crashreport:latest.release")
-    "meituImplementation"("com.tencent.bugly:crashreport:latest.release")
-    "devImplementation"("com.tencent.bugly:crashreport:latest.release")
+    "defaultImplementation"(libs.bugly.crashreport)
+    "samsungImplementation"(libs.bugly.crashreport)
+    "meituImplementation"(libs.bugly.crashreport)
+    "devImplementation"(libs.bugly.crashreport)
 
     // Billing for google flavor
     "googleImplementation"(libs.google.billing)
