@@ -33,7 +33,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.Job
 import com.hinnka.mycamera.livephoto.LivePhotoRecorder
 import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.lut.VideoColorEffectLayer
@@ -262,10 +261,6 @@ class Camera2Controller(private val context: Context) {
     private var multiFrameTorchWarmupTriggerResultSeen = false
     private var isMultiFrameTorchCaptureActive = false
     private var isContinuousBurstTorchActive = false
-    private var isLivePhotoTorchCaptureActive = false
-    private var livePhotoTorchOffRunnable: Runnable? = null
-    private var livePhotoVideoStartJob: Job? = null
-    private var livePhotoVideoStartGeneration = 0L
     private var livePhotoVideoStartTimestampUs: Long? = null
     private var pendingMultiFrameFocusCapture: PendingMultiFrameFocusCapture? = null
     private var pendingMultiFrameFocusResult: TotalCaptureResult? = null
@@ -604,7 +599,7 @@ class Camera2Controller(private val context: Context) {
             _state.update {
                 it.copy(isCapturing = false, hdrBracketCapturing = false, hdrBracketFrameCount = 0)
             }
-            resetPreviewAfterCapture(keepLivePhotoTorch = successful && !shot.failed)
+            resetPreviewAfterCapture(keepLivePhotoCapture = successful && !shot.failed)
         }
         if (!shot.failed) {
             if (!shot.continuousBurst) {
@@ -1001,7 +996,7 @@ class Camera2Controller(private val context: Context) {
     private fun resolveImageReaderMaxImages(): Int = CAPTURE_READER_MAX_IMAGES
 
     private fun captureImageRequestCount(state: CameraState, reader: ImageReader): Int = when {
-        shouldUseJpgMaxHdrCapture(state, isRawCaptureReader(reader)) && !shouldUseTorchForCapture(state) ->
+        shouldUseJpgMaxHdrCapture(state, isRawCaptureReader(reader)) && !shouldUseMultiFrameTorch(state) ->
             buildHdrBracketEvOffsets(resolveHdrBracketZeroEvFrameCount(state)).size
         state.requiresMultiFrameCaptureSequence -> state.activeMultiFrameCount
         else -> 1
@@ -1516,9 +1511,6 @@ class Camera2Controller(private val context: Context) {
         try {
             val triggerRequest = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(previewTarget)
-                if (isLivePhotoTorchCaptureActive) {
-                    stabilizationImageReader?.surface?.let(::addTarget)
-                }
                 set(
                     CaptureRequest.CONTROL_CAPTURE_INTENT,
                     CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW
@@ -1662,9 +1654,6 @@ class Camera2Controller(private val context: Context) {
         try {
             val torchRequestBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                 addTarget(previewTarget)
-                if (isLivePhotoTorchCaptureActive) {
-                    stabilizationImageReader?.surface?.let(::addTarget)
-                }
                 set(
                     CaptureRequest.CONTROL_CAPTURE_INTENT,
                     CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW
@@ -2064,7 +2053,6 @@ class Camera2Controller(private val context: Context) {
         _state.update { it.copy(isCapturing = false, hdrBracketCapturing = false, hdrBracketFrameCount = 0) }
         previewSessionGeneration++
         previewUpdateScheduled.set(false)
-        clearLivePhotoTorchCapture()
         livePhotoVideoStartTimestampUs = null
         clearPrecaptureTracking()
         clearMultiFrameTorchWarmupTracking()
@@ -2624,7 +2612,6 @@ class Camera2Controller(private val context: Context) {
                 surfaceTexture.setDefaultBufferSize(previewSize.width, previewSize.height)
 
                 if (_state.value.useLivePhoto && captureMode == CaptureMode.PHOTO) {
-                    updateLivePhotoBufferingPolicy()
                     livePhotoRecorder.startRecording()
                 }
 
@@ -4290,23 +4277,10 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private fun resolvePhotoFlashMode(state: CameraState): Int {
-        // Single flash in Live Photo uses torch only for the capture and its post-roll.
-        return if (state.useLivePhoto && state.flashMode == CameraMetadata.FLASH_MODE_SINGLE) {
-            if (isLivePhotoTorchCaptureActive) {
-                CameraMetadata.FLASH_MODE_TORCH
-            } else {
-                CameraMetadata.FLASH_MODE_OFF
-            }
-        } else {
-            state.flashMode
-        }
-    }
-
     private fun shouldUsePreviewStillFlashAeMode(state: CameraState): Boolean {
         return isFlashSupported &&
             state.captureMode == CaptureMode.PHOTO &&
-            resolvePhotoFlashMode(state) == CameraMetadata.FLASH_MODE_SINGLE &&
+            state.flashMode == CameraMetadata.FLASH_MODE_SINGLE &&
             state.isIsoAuto &&
             state.isShutterSpeedAuto &&
             availableAeModes.contains(CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH)
@@ -4334,7 +4308,7 @@ class Camera2Controller(private val context: Context) {
                     resolveSupportedAeMode(CaptureRequest.CONTROL_AE_MODE_ON)
                 } else {
                     when {
-                        resolvePhotoFlashMode(state) == CameraMetadata.FLASH_MODE_SINGLE &&
+                        state.flashMode == CameraMetadata.FLASH_MODE_SINGLE &&
                                 effectiveUseStillFlashAeMode ->
                             resolveStillFlashAeMode()
 
@@ -4445,7 +4419,7 @@ class Camera2Controller(private val context: Context) {
                 state.rawMinShutterSpeedNs > 0L &&
                 state.isIsoAuto &&
                 state.isShutterSpeedAuto &&
-                resolvePhotoFlashMode(state) != CameraMetadata.FLASH_MODE_SINGLE
+                state.flashMode != CameraMetadata.FLASH_MODE_SINGLE
     }
 
     private fun applyVideoFpsRange(builder: CaptureRequest.Builder, targetFps: Int) {
@@ -4694,7 +4668,7 @@ class Camera2Controller(private val context: Context) {
             return
         }
 
-        when (resolvePhotoFlashMode(state)) {
+        when (state.flashMode) {
             CameraMetadata.FLASH_MODE_SINGLE -> {
                 if (!state.isIsoAuto || !state.isShutterSpeedAuto) {
                     // Manual/semi-manual exposure has no AE precapture convergence.
@@ -5476,29 +5450,10 @@ class Camera2Controller(private val context: Context) {
 
     fun setFlashMode(value: Int) {
         _state.value = _state.value.copy(flashMode = value)
-        updatePhotoFlashPreview()
-    }
-
-    private fun updatePhotoFlashPreview() {
-        val handler = cameraHandler
-        if (handler != null && Looper.myLooper() != handler.looper) {
-            handler.post { updatePhotoFlashPreview() }
-            return
-        }
-
-        if (!_state.value.useLivePhoto ||
-            _state.value.flashMode != CameraMetadata.FLASH_MODE_SINGLE ||
-            _state.value.captureMode != CaptureMode.PHOTO
-        ) {
-            if (livePhotoVideoStartJob != null) {
-                abortMultiFrameTorchWarmup("Live Photo flash disabled while starting video")
-            }
-            clearLivePhotoTorchCapture()
-        }
-        updateLivePhotoBufferingPolicy()
 
         previewRequestBuilder?.apply {
-            // Reapply AE and flash together when either flash mode or Live Photo changes.
+            // 预览不发送预闪触发器；支持 ON_ALWAYS_FLASH 时由 AE 模式保留闪光会话配置，
+            // 实际闪光仍只由静态拍摄/预闪序列触发。
             applyBaseCameraSettings(this, isCapture = false)
             setAePrecaptureTriggerIfSupported(
                 this,
@@ -5506,16 +5461,6 @@ class Camera2Controller(private val context: Context) {
             )
             updatePreview()
         }
-    }
-
-    fun usesTorchForLivePhotoCapture(): Boolean {
-        val currentState = _state.value
-        return currentState.captureMode == CaptureMode.PHOTO && currentState.useLivePhoto &&
-            isFlashSupported && currentState.flashMode == CameraMetadata.FLASH_MODE_SINGLE
-    }
-
-    private fun updateLivePhotoBufferingPolicy() {
-        livePhotoRecorder.setPreCaptureBufferingEnabled(!usesTorchForLivePhotoCapture())
     }
 
     /**
@@ -7569,11 +7514,11 @@ class Camera2Controller(private val context: Context) {
         baseExposureResult: CaptureResult?,
     ) {
         val currentState = _state.value
-        val useMultiFrameTorch = shouldUseTorchForCapture(currentState)
+        val useMultiFrameTorch = shouldUseMultiFrameTorch(currentState)
         val needsPrecapture =
             isFlashSupported &&
             isAePrecaptureSupported() &&
-            resolvePhotoFlashMode(currentState) == CameraMetadata.FLASH_MODE_SINGLE &&
+            currentState.flashMode == CameraMetadata.FLASH_MODE_SINGLE &&
             currentState.isIsoAuto &&
             currentState.isShutterSpeedAuto &&
             resolveStillFlashAeMode() != CaptureRequest.CONTROL_AE_MODE_OFF
@@ -7583,16 +7528,11 @@ class Camera2Controller(private val context: Context) {
             pendingCaptureReader = reader
             pendingCaptureBaseExposureResult = baseExposureResult
             isMultiFrameTorchCaptureActive = true
-            isLivePhotoTorchCaptureActive = currentState.useLivePhoto
-            PLog.d(TAG, "Starting capture torch warm-up: livePhoto=${currentState.useLivePhoto}")
+            PLog.d(TAG, "Starting multi-frame torch warm-up")
             runMultiFrameTorchWarmupSequence { torchResult ->
                 pendingCaptureBaseExposureResult = torchResult ?: pendingCaptureBaseExposureResult
-                if (currentState.useLivePhoto) {
-                    startLivePhotoVideoAfterTorch(torchResult)
-                } else {
-                    internalCaptureState = STATE_PICTURE_TAKEN
-                    runCaptureSequence()
-                }
+                internalCaptureState = STATE_PICTURE_TAKEN
+                runCaptureSequence()
             }
         } else if (needsPrecapture) {
             pendingCaptureDevice = device
@@ -7603,32 +7543,6 @@ class Camera2Controller(private val context: Context) {
         } else {
             PLog.d(TAG, "直接拍照")
             performCapture(device, reader, baseExposureResult)
-        }
-    }
-
-    private fun startLivePhotoVideoAfterTorch(result: TotalCaptureResult?) {
-        val handler = cameraHandler
-        val timestampNs = result?.get(CaptureResult.SENSOR_TIMESTAMP)
-        if (!isLivePhotoTorchCaptureActive || handler == null || timestampNs == null ||
-            !isTorchSessionUpdateApplied(result.request, result)
-        ) {
-            abortMultiFrameTorchWarmup("No confirmed torch frame to start Live Photo video")
-            return
-        }
-        val generation = ++livePhotoVideoStartGeneration
-        livePhotoVideoStartJob = livePhotoRecorder.startCaptureAfterTorch(timestampNs / 1000) { startTimestampUs ->
-            handler.post {
-                if (generation != livePhotoVideoStartGeneration) return@post
-                livePhotoVideoStartJob = null
-                if (startTimestampUs == null) {
-                    abortMultiFrameTorchWarmup("Live Photo video did not produce a torch keyframe")
-                    return@post
-                }
-                livePhotoVideoStartTimestampUs = startTimestampUs
-                _state.update { it.copy(isCapturingLivePhoto = true) }
-                internalCaptureState = STATE_PICTURE_TAKEN
-                runCaptureSequence()
-            }
         }
     }
 
@@ -7664,11 +7578,8 @@ class Camera2Controller(private val context: Context) {
         }
 
         try {
-            // A previous Live Photo's post-roll must not switch off a new capture's torch.
-            livePhotoTorchOffRunnable?.let { handler?.removeCallbacks(it) }
-            livePhotoTorchOffRunnable = null
             livePhotoVideoStartTimestampUs = null
-            if (_state.value.useLivePhoto && !usesTorchForLivePhotoCapture()) {
+            if (_state.value.useLivePhoto) {
                 snapshotLivePhoto()
             }
 
@@ -8232,8 +8143,8 @@ class Camera2Controller(private val context: Context) {
                 !state.useLivePhoto
     }
 
-    private fun shouldUseTorchForCapture(state: CameraState): Boolean {
-        return (state.requiresMultiFrameCaptureSequence || state.useLivePhoto) &&
+    private fun shouldUseMultiFrameTorch(state: CameraState): Boolean {
+        return state.requiresMultiFrameCaptureSequence &&
                 isFlashSupported &&
                 state.flashMode == CameraMetadata.FLASH_MODE_SINGLE
     }
@@ -8471,41 +8382,7 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
-    private fun clearLivePhotoTorchCapture() {
-        if (isLivePhotoTorchCaptureActive) {
-            livePhotoRecorder.finishTorchRecording()
-            _state.update { it.copy(isCapturingLivePhoto = false) }
-        }
-        livePhotoVideoStartGeneration++
-        livePhotoVideoStartJob?.cancel()
-        livePhotoVideoStartJob = null
-        livePhotoTorchOffRunnable?.let { cameraHandler?.removeCallbacks(it) }
-        livePhotoTorchOffRunnable = null
-        isLivePhotoTorchCaptureActive = false
-    }
-
-    private fun finishLivePhotoTorchCapture(keepForPostCapture: Boolean) {
-        val handler = cameraHandler
-        if (!keepForPostCapture || !isLivePhotoTorchCaptureActive || handler == null) {
-            if (isLivePhotoTorchCaptureActive && !keepForPostCapture) {
-                livePhotoRecorder.finishTorchRecording(cancelled = true)
-            }
-            clearLivePhotoTorchCapture()
-            return
-        }
-        livePhotoTorchOffRunnable?.let { handler.removeCallbacks(it) }
-        val turnOff = Runnable {
-            clearLivePhotoTorchCapture()
-            updatePhotoFlashPreview()
-            PLog.d(TAG, "Live Photo capture torch switched off after post-roll")
-        }
-        livePhotoTorchOffRunnable = turnOff
-        // Start the post-roll window after still capture completes, so torch warm-up
-        // and long exposures cannot consume the time reserved for the trailing video.
-        handler.postDelayed(turnOff, livePhotoRecorder.postCaptureDurationMs)
-    }
-
-    private fun resetPreviewAfterCapture(keepLivePhotoTorch: Boolean = false) {
+    private fun resetPreviewAfterCapture(keepLivePhotoCapture: Boolean = false) {
         pendingContinuousBurstCapture?.let {
             failPhotoCapture(it, "continuous burst preparation cancelled")
         }
@@ -8515,13 +8392,10 @@ class Camera2Controller(private val context: Context) {
             activePhotoCapture = null
             _state.update { it.copy(isCapturing = false, hdrBracketCapturing = false, hdrBracketFrameCount = 0) }
         }
-        if (!keepLivePhotoTorch) {
-            if (!isLivePhotoTorchCaptureActive) {
-                livePhotoVideoStartTimestampUs?.let(livePhotoRecorder::cancelCapture)
-            }
+        if (!keepLivePhotoCapture) {
+            livePhotoVideoStartTimestampUs?.let(livePhotoRecorder::cancelCapture)
             livePhotoVideoStartTimestampUs = null
         }
-        finishLivePhotoTorchCapture(keepLivePhotoTorch)
         // 重置拍照状态机
         clearPrecaptureTracking()
         clearMultiFrameTorchWarmupTracking()
@@ -8545,9 +8419,6 @@ class Camera2Controller(private val context: Context) {
         }
 
         try {
-            // The reset request must use the same illumination as the resumed preview.
-            applyExposureSettings(builder, _state.value, isCapture = false)
-            applyFlashSettings(builder, _state.value, isCapture = false)
             if (afTriggerModeToCancel != null) {
                 builder.set(CaptureRequest.CONTROL_AF_MODE, afTriggerModeToCancel)
                 builder.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_CANCEL)
@@ -9067,7 +8938,6 @@ class Camera2Controller(private val context: Context) {
      */
     fun setUseLivePhoto(enabled: Boolean) {
         _state.value = _state.value.copy(useLivePhoto = enabled)
-        updatePhotoFlashPreview()
         if (enabled && _state.value.captureMode == CaptureMode.PHOTO) {
             livePhotoRecorder.startRecording()
         } else {
@@ -9092,7 +8962,6 @@ class Camera2Controller(private val context: Context) {
      * 执行 Live Photo 快照（在按下快门时尽早调用，以确定“之前”的时间范围）
      */
     fun snapshotLivePhoto() {
-        if (usesTorchForLivePhotoCapture()) return
         livePhotoVideoStartTimestampUs = livePhotoRecorder.snapshot()
     }
 

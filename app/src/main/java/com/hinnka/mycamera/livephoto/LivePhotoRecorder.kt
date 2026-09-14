@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference
 class LivePhotoRecorder(
     private val context: Context,
     private val bufferDurationMs: Long = 1500L,
-    val postCaptureDurationMs: Long = 1500L,
+    private val postCaptureDurationMs: Long = 1500L,
     private val frameRateHz: Int = 30
 ) {
     companion object {

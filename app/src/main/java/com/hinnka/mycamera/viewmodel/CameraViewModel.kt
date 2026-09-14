@@ -3330,7 +3330,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             settings.captureId = id
             pendingCaptureSettings[id] = settings
             capturePhotoThumbnails(settings)
-            if (settings.state.useLivePhoto && !cameraController.usesTorchForLivePhotoCapture()) {
+            if (settings.state.useLivePhoto) {
                 cameraController.setCapturingLivePhoto(true)
                 livePhotoIndicatorJob?.cancel()
                 livePhotoIndicatorJob = viewModelScope.launch {
