@@ -29,6 +29,24 @@ class MgcSpatialStrengthMap(
         return result
     }
 
+    /**
+     * V25 SpatialMerge::Finish keeps the AOT's complete RAW/4 cells in place and
+     * initializes strength outside that region to Q8 identity (256). The extra
+     * partial cell needed by our full-resolution denoiser is storage coverage,
+     * not a change of image scale.
+     */
+    fun withIdentityBorder(fullWidth: Int, fullHeight: Int): MgcSpatialStrengthMap {
+        require(width == fullWidth / 4 && height == fullHeight / 4)
+        val coveredWidth = (fullWidth + 3) / 4
+        val coveredHeight = (fullHeight + 3) / 4
+        if (width == coveredWidth && height == coveredHeight) return this
+        val covered = identityForFullResolution(fullWidth, fullHeight)
+        for (y in 0 until height) {
+            q8.copyInto(covered.q8, y * coveredWidth, y * width, (y + 1) * width)
+        }
+        return covered
+    }
+
     companion object {
         /** Q8 identity multiplier used by MGC before a Spatial model is available. */
         private const val IDENTITY_Q8 = 256

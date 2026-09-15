@@ -5,6 +5,20 @@ import org.junit.Test
 
 class MgcSpatialDiagnosticGeometryTest {
     @Test
+    fun croppedRawAcceptanceMatchesV25ProducerWithoutPadding() {
+        for ((width, height) in listOf(2862 to 2146, 2862 to 2144, 2864 to 2146)) {
+            val producer = mgcSpatialRejectionGeometry(width, height, 4)
+            for (mode in MgcSpatialOutputMode.entries) {
+                val consumer = mgcSpatialDiagnosticGeometry(mode, width, height)
+                assertEquals(width / 4, consumer.rejectionWidth)
+                assertEquals(height / 4, consumer.rejectionHeight)
+                assertEquals(producer.mergeWeightWidth, consumer.rejectionWidth)
+                assertEquals(producer.mergeWeightHeight, consumer.rejectionHeight)
+            }
+        }
+    }
+
+    @Test
     fun rgbFixed16PlanesCoverTheFinalCompleteAotTile() {
         val geometry = mgcSpatialDiagnosticGeometry(
             outputMode = MgcSpatialOutputMode.RGB,

@@ -32,8 +32,8 @@ internal fun mgcSpatialRejectionGeometry(
     require(filterDownsample > 0)
     val guideWidth = ceilDiv(imageWidth, 2)
     val guideHeight = ceilDiv(imageHeight, 2)
-    val mergeWeightWidth = guideWidth / 2
-    val mergeWeightHeight = guideHeight / 2
+    val mergeWeightWidth = imageWidth / 4
+    val mergeWeightHeight = imageHeight / 4
     require(mergeWeightWidth > 0 && mergeWeightHeight > 0)
     return MgcSpatialRejectionGeometry(
         bayerQuadWidth = ceilDiv(imageWidth, 2),

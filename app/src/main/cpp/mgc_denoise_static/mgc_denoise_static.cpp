@@ -1037,8 +1037,10 @@ int ComputeSpatialStrengthMap(
         (height + (is_bayer ? 7 : 15)) / (is_bayer ? 8 : 16);
     if (alignment_width != expected_alignment_width ||
         alignment_height != expected_alignment_height ||
-        rejection_width != (width + 3) / 4 ||
-        rejection_height != (height + 3) / 4) {
+        // V25 passes the unpadded RAW/4 acceptance domain to the noise AOT.
+        // This is independent of the padded 16x16 signal allocation below.
+        rejection_width != width / 4 ||
+        rejection_height != height / 4) {
         return -1;
     }
 

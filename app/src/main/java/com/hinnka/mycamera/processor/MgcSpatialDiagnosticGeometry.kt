@@ -18,7 +18,7 @@ internal fun mgcSpatialDiagnosticGeometry(
     imageWidth: Int,
     imageHeight: Int,
 ): MgcSpatialDiagnosticGeometry {
-    require(imageWidth > 0 && imageHeight > 0)
+    require(imageWidth >= 4 && imageHeight >= 4)
     val isBayer = outputMode == MgcSpatialOutputMode.BAYER
     val alignmentTileSize = if (isBayer) 8 else 16
     val fixed16Width = if (isBayer) {
@@ -37,8 +37,11 @@ internal fun mgcSpatialDiagnosticGeometry(
         imageHeight = imageHeight,
         alignmentWidth = ceilDiv(imageWidth, alignmentTileSize),
         alignmentHeight = ceilDiv(imageHeight, alignmentTileSize),
-        rejectionWidth = ceilDiv(imageWidth, 4),
-        rejectionHeight = ceilDiv(imageHeight, 4),
+        // V25 PrepareAccumulation requires RAW.width()/4 by RAW.height()/4.
+        // Only the signal allocation is padded to complete AOT tiles. Rounding the
+        // acceptance domain up makes the RGB atlas read past every source slice.
+        rejectionWidth = imageWidth / 4,
+        rejectionHeight = imageHeight / 4,
         fixed16Width = fixed16Width,
         fixed16Height = fixed16Height,
         fixed16SampleCount = fixed16Width.toLong() * fixed16Height * fixed16Channels,

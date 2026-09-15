@@ -5741,6 +5741,13 @@ internal class GlesMgcRawSpatialStacker(
     ) {
         require(frameIndex in 0 until capture.frameCount)
         require(!capture.captured[frameIndex])
+        if (capture.outputMode == MgcSpatialOutputMode.RGB && !identityRejection) {
+            val source = checkNotNull(textureSpecs[rejectionTexture])
+            check(source.width == capture.rejectionWidth && source.height == capture.rejectionHeight) {
+                "MGC RGB acceptance slice ${source.width}x${source.height} does not match " +
+                    "AOT domain ${capture.rejectionWidth}x${capture.rejectionHeight}"
+            }
+        }
         for (component in 0 until 2) {
             val slot = component * capture.frameCount + frameIndex
             val outputOriginX = capture.alignmentLayout.originX(slot)
@@ -8530,18 +8537,21 @@ internal class GlesMgcRawSpatialStacker(
     private fun mapSpatialStrengthToOutputCoordinates(
         source: MgcSpatialStrengthMap,
     ): MgcSpatialStrengthMap {
+        val coveredSource = source.withIdentityBorder(width, height)
         val targetWidth = ceilDiv(outputWidth, 4)
         val targetHeight = ceilDiv(outputHeight, 4)
-        if (source.width == targetWidth && source.height == targetHeight) return source
+        if (coveredSource.width == targetWidth && coveredSource.height == targetHeight) {
+            return coveredSource
+        }
         val startNs = System.nanoTime()
         val mapped = MgcSpatialStrengthMapScaler.scaleBilinear(
-            source = source,
+            source = coveredSource,
             targetWidth = targetWidth,
             targetHeight = targetHeight,
         )
         PLog.i(
             TAG,
-            "MGC Spatial strength coordinates mapped ${source.width}x${source.height} -> " +
+            "MGC Spatial strength coordinates mapped ${coveredSource.width}x${coveredSource.height} -> " +
                 "${targetWidth}x$targetHeight for ${normalizedOutputScale}x RGB output " +
                 "backend=native-openmp took=" +
                 "${(System.nanoTime() - startNs) / 1_000_000L}ms",

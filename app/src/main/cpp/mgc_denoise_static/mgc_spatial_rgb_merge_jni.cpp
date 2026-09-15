@@ -191,10 +191,10 @@ Java_com_hinnka_mycamera_processor_MgcSpatialRgbMerger_nativeMerge(
         (static_cast<int64_t>(output_width) + 15) / 16;
     const int64_t expected_alignment_height =
         (static_cast<int64_t>(output_height) + 15) / 16;
-    const int64_t expected_rejection_width =
-        (static_cast<int64_t>(output_width) + 3) / 4;
-    const int64_t expected_rejection_height =
-        (static_cast<int64_t>(output_height) + 3) / 4;
+    // V25's rejection slices describe complete RAW/4 cells, not padded output
+    // storage. MergeRgb clamps sampling to the supplied rejection extents.
+    const int64_t expected_rejection_width = raw_width / 4;
+    const int64_t expected_rejection_height = raw_height / 4;
     if (frame_count <= 0 || raw_offsets_array == nullptr ||
         raw_row_strides_array == nullptr || alignment_buffer == nullptr ||
         rejection_buffer == nullptr || output_buffer == nullptr ||
