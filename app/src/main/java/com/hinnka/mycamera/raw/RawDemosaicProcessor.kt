@@ -1835,6 +1835,7 @@ class RawDemosaicProcessor {
         photonHdrRatio: Float? = null,
         photonSourceToShortGain: Float? = null,
         photonHdrNetPostExposureEv: Float? = null,
+        photonHdrNetInputExposureEv: Float? = null,
         rawCfaCorrectionMode: String? = null,
         rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
         onMetadata: ((RawMetadata) -> Unit)? = null
@@ -1882,6 +1883,7 @@ class RawDemosaicProcessor {
                 photonHdrRatio = photonHdrRatio,
                 photonSourceToShortGain = photonSourceToShortGain,
                 photonHdrNetPostExposureEv = photonHdrNetPostExposureEv,
+                photonHdrNetInputExposureEv = photonHdrNetInputExposureEv,
                 rawCfaCorrectionMode = rawCfaCorrectionMode,
                 rawBlackBorderCrop = rawBlackBorderCrop,
                 dngFile = dngFile,
@@ -2080,6 +2082,7 @@ class RawDemosaicProcessor {
         photonHdrRatio: Float? = null,
         photonSourceToShortGain: Float? = null,
         photonHdrNetPostExposureEv: Float? = null,
+        photonHdrNetInputExposureEv: Float? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null
     ): RawHdrRenderResult? = withContext(glDispatcher) {
         val dngFile = File(dngFilePath)
@@ -2131,6 +2134,7 @@ class RawDemosaicProcessor {
                 photonHdrRatio = photonHdrRatio,
                 photonSourceToShortGain = photonSourceToShortGain,
                 photonHdrNetPostExposureEv = photonHdrNetPostExposureEv,
+                photonHdrNetInputExposureEv = photonHdrNetInputExposureEv,
             )
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to process RAW HDR sources: $dngFilePath", e)
@@ -2190,6 +2194,7 @@ class RawDemosaicProcessor {
         photonHdrRatio: Float? = null,
         photonSourceToShortGain: Float? = null,
         photonHdrNetPostExposureEv: Float? = null,
+        photonHdrNetInputExposureEv: Float? = null,
         onMetadata: ((RawMetadata) -> Unit)? = null,
     ): RawHdrRenderResult? = withContext(glDispatcher) {
         if ((rawData == null && gpuLinearRgbSource == null) ||
@@ -2286,6 +2291,7 @@ class RawDemosaicProcessor {
                 photonHdrRatio = photonHdrRatio,
                 photonSourceToShortGain = photonSourceToShortGain,
                 photonHdrNetPostExposureEv = photonHdrNetPostExposureEv,
+                photonHdrNetInputExposureEv = photonHdrNetInputExposureEv,
                 defaultCropIsAuthoritative = true,
             )
         } catch (e: Exception) {
@@ -2344,6 +2350,7 @@ class RawDemosaicProcessor {
         photonHdrRatio: Float? = null,
         photonSourceToShortGain: Float? = null,
         photonHdrNetPostExposureEv: Float? = null,
+        photonHdrNetInputExposureEv: Float? = null,
         rawCfaCorrectionMode: String? = null,
         rawBlackBorderCrop: RawBlackBorderCrop = RawBlackBorderCrop(),
         dngFile: File? = null,
@@ -3467,7 +3474,10 @@ class RawDemosaicProcessor {
                 val selectedCaptureHdrRatio = captureProfileOutput?.hdrRatio ?: captureHdrRatio
                 val selectedCaptureSourceToShortGain =
                     captureProfileOutput?.sourceToShortGain ?: captureSourceToShortGain
-                val captureSummaryText = solvedSceneExposure?.summaryText?.let { summary ->
+                val captureSummaryText = (solvedSceneExposure?.summaryText
+                    ?: captureProfileOutput?.hdrNetInputExposureEv?.let {
+                        "PhotonCamera RAW AE SummaryText v1"
+                    })?.let { summary ->
                     val output = captureProfileOutput ?: return@let summary
                     val outputShortGain = output.sourceToShortGain ?: return@let summary
                     val outputHdrRatio = output.hdrRatio ?: return@let summary
@@ -3479,9 +3489,12 @@ class RawDemosaicProcessor {
                         appendLine("hdrNetFinalShortGain=$outputShortGain")
                         appendLine("hdrNetFinalLongGain=${outputShortGain * outputHdrRatio}")
                         appendLine("hdrNetFinalHdrRatio=$outputHdrRatio")
-                        appendLine(
-                            "hdrNetPostExposureEv=${output.hdrNetPostExposureEv ?: 0f}",
-                        )
+                        RawPhotonHdrMetadata.appendInputExposureSummary(this, output.hdrNetInputExposureEv)
+                        if (output.hdrNetInputExposureEv == null) {
+                            output.hdrNetPostExposureEv?.let {
+                                appendLine("hdrNetPostExposureEv=$it")
+                            }
+                        }
                     }.trimEnd()
                 }
                 val captureProfileFailed =
@@ -3505,6 +3518,7 @@ class RawDemosaicProcessor {
                         hdrRatio = selectedCaptureHdrRatio,
                         finalShortGain = selectedCaptureSourceToShortGain,
                         hdrNetPostExposureEv = captureProfileOutput?.hdrNetPostExposureEv,
+                        hdrNetInputExposureEv = captureProfileOutput?.hdrNetInputExposureEv,
                         rawSceneExposureSummaryText = captureSummaryText,
                         profileGainTableMap = captureProfileGainTableMap,
                         gpuDemosaicedRawSource = reusableDemosaicSource,
@@ -3516,12 +3530,18 @@ class RawDemosaicProcessor {
 
             var hdrNetSceneExposureGain = RawHdrReferenceMath.hdrNetSceneExposureGain(
                 photonHdrRatio, photonSourceToShortGain, photonHdrNetPostExposureEv,
+                photonHdrNetInputExposureEv,
             )
             if (regeneratePhotonPgtm) {
                 val persistedHdrRatio = photonHdrRatio?.takeIf { it.isFinite() && it >= 1f }
                 val persistedSourceToShortGain = photonSourceToShortGain
                     ?.takeIf { it.isFinite() && it > 0f }
                 val persistedPostExposureEv = photonHdrNetPostExposureEv
+                    ?.takeIf {
+                        it.isFinite() && it in
+                            MeteringSystem.RAW_EXPOSURE_MIN_EV..MeteringSystem.RAW_EXPOSURE_MAX_EV
+                    }
+                val persistedInputExposureEv = photonHdrNetInputExposureEv
                     ?.takeIf {
                         it.isFinite() && it in
                             MeteringSystem.RAW_EXPOSURE_MIN_EV..MeteringSystem.RAW_EXPOSURE_MAX_EV
@@ -3551,10 +3571,10 @@ class RawDemosaicProcessor {
                     ?.takeIf { it.isFinite() && it >= 1f }
                 val estimatedSourceToShortGain = estimatedExposure?.finalShortGain
                     ?.takeIf { it.isFinite() && it > 0f }
-                // Capture-time short gain and HDR ratio describe the fixed HDRNet inference.
-                // The downstream viewfinder-match exposure is persisted independently so PGTM
-                // refresh can reproduce the composed result without changing model inputs.
-                // ML AE remains a fallback for older metadata contracts.
+                // Physical short gain and ratio remain separate from the versioned HDRNet
+                // input exposure. Legacy post EV is only a target-reconstruction hint; the
+                // generator must not reinterpret it as an input EV. ML AE is the fallback
+                // when an imported RAW has no complete capture recipe.
                 val useEstimatedAe = !usePersistedCaptureAe &&
                     estimatedHdrRatio != null && estimatedSourceToShortGain != null
                 val regenerationHdrRatio = when {
@@ -3591,6 +3611,7 @@ class RawDemosaicProcessor {
                         "finalShortGain=$regenerationSourceToShortGain " +
                         "finalLongGain=$regenerationLongGain " +
                         "postExposureEv=${persistedPostExposureEv ?: 0f} " +
+                        "inputExposureEv=$persistedInputExposureEv " +
                         "aeSource=$regenerationAeSource " +
                         "sourceBaselineEv=${actualMetadata.baselineExposure} " +
                         "sourceBaselineGain=${exactDngBaselineExposureGain(actualMetadata)} " +
@@ -3617,6 +3638,7 @@ class RawDemosaicProcessor {
                     hdrRatio = regenerationHdrRatio,
                     sourceToShortGain = regenerationSourceToShortGain,
                     hdrNetPostExposureEv = persistedPostExposureEv,
+                    hdrNetInputExposureEv = persistedInputExposureEv,
                     colorCorrectionMatrix = linearColorCorrectionMatrix,
                     hueSatMap = activeDcpRenderPlan?.hueSatMap,
                     hueSatMapSupportsOverrange = hueSatMapSupportsOverrange,
@@ -3636,6 +3658,7 @@ class RawDemosaicProcessor {
                     regeneratedPhotonPgtm.hdrRatio,
                     regeneratedPhotonPgtm.sourceToShortGain,
                     regeneratedPhotonPgtm.hdrNetPostExposureEv,
+                    regeneratedPhotonPgtm.hdrNetInputExposureEv,
                 )
                 PLog.i(
                     TAG,
@@ -3645,7 +3668,8 @@ class RawDemosaicProcessor {
                         regeneratedPhotonPgtm.map.mapPointsN +
                         " hdrRatio=${regeneratedPhotonPgtm.hdrRatio}" +
                         " finalShortGain=${regeneratedPhotonPgtm.sourceToShortGain}" +
-                        " postExposureEv=${regeneratedPhotonPgtm.hdrNetPostExposureEv}",
+                        " postExposureEv=${regeneratedPhotonPgtm.hdrNetPostExposureEv}" +
+                        " inputExposureEv=${regeneratedPhotonPgtm.hdrNetInputExposureEv}",
                 )
             }
 
@@ -3672,9 +3696,9 @@ class RawDemosaicProcessor {
                 applyDngBaselineExposure = applyProfileDngBaselineExposure,
                 useRamp = useProfileExposureRamp
             )
-            // HDRNet's PGTM includes short -> long fusion and post exposure, while its lookup
-            // weights encode only the short coordinate. BaselineExposure cannot recover that
-            // scene reference. Carry the captured long gain separately and apply edit EV once.
+            // HDRNet's PGTM includes its input exposure and short -> long response. Keep the
+            // physical long gain and recipe EV explicit for the HDR scene reference rather
+            // than inferring either from PGTM weights; apply the user's edit EV once.
             val hdrReferenceSceneExposureGain = hdrNetSceneExposureGain
                 ?.takeIf { photonHdrRequested && hasProfileGainTableMap }
                 ?.let { it * 2f.pow(profileExposureCompensation) }
@@ -4710,6 +4734,7 @@ class RawDemosaicProcessor {
         hdrRatio: Float,
         sourceToShortGain: Float,
         hdrNetPostExposureEv: Float? = null,
+        hdrNetInputExposureEv: Float? = null,
         colorCorrectionMatrix: FloatArray,
         hueSatMap: DcpHueSatMap?,
         hueSatMapSupportsOverrange: Boolean,
@@ -4754,6 +4779,7 @@ class RawDemosaicProcessor {
                 hdrRatio = hdrRatio,
                 sourceToShortGain = sourceToShortGain,
                 hdrNetPostExposureEv = hdrNetPostExposureEv,
+                hdrNetInputExposureEv = hdrNetInputExposureEv,
                 colorCorrectionMatrix = colorCorrectionMatrix,
                 hueSatMap = hueSatMap,
                 hueSatMapSupportsOverrange = hueSatMapSupportsOverrange,

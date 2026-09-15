@@ -8,6 +8,16 @@ import kotlin.math.pow
 
 class RawHdrReferenceMathTest {
     @Test
+    fun inputExposureReferenceTakesPrecedenceWithoutMultiplyingLegacyPostEv() {
+        assertEquals(
+            0.25f,
+            RawHdrReferenceMath.hdrNetSceneExposureGain(4f, 0.5f, -2f, -3f)!!,
+            0f,
+        )
+        assertEquals(0.5f, RawHdrReferenceMath.hdrNetSceneExposureGain(4f, 0.5f, -2f)!!, 0f)
+    }
+
+    @Test
     fun followsSelectedBaseCurveThroughTheJoin() {
         val base = sampledCurve { x -> x * x * (3f - 2f * x) }
         val extension = RawHdrReferenceMath.solve(base)

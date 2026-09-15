@@ -75,11 +75,13 @@ internal data class RawLegacyHighlightExposureLimit(
 /**
  * Capture-side viewfinder matching derived from PhotonCamera 1.27.1's spatial solver. Native code
  * owns reference linearization, robust grid statistics and exposure selection. HDRNet matching
- * evaluates its completed processing chain once and solves only a downstream scalar exposure.
+ * rerenders the complete HDRNet and Dehaze chain at each proposed input exposure.
  */
 internal object RawLegacyAutoExposureMatcher {
     private const val TAG = "RawLegacyAutoExposureMatcher"
     private const val PREVIEW_LONG_EDGE = 256
+    private const val HDRNET_GRID_COLUMNS = 8
+    private const val HDRNET_GRID_ROWS = 6
     private const val PORTRAIT_PRIORITY_MINIMUM_AREA_FRACTION = 0.045f
     private data class ViewfinderReference(
         val frame: RawLegacyExposurePreviewFrame,
@@ -94,6 +96,11 @@ internal object RawLegacyAutoExposureMatcher {
         val exposureEv: Float,
         val matchRate: Float,
         val meanAbsoluteErrorEv: Float,
+    )
+
+    data class HdrNetInputExposureMatch(
+        val exposureEv: Float,
+        val matchedReference: Boolean,
     )
 
     fun createRequest(
@@ -255,6 +262,91 @@ internal object RawLegacyAutoExposureMatcher {
         }
     }
 
+    /** Scores completed HDRNet candidates; no exposure is applied after their tone response. */
+    fun solveHdrNetInputExposure(
+        referenceFrame: RawLegacyExposurePreviewFrame,
+        renderSample: (Float) -> DngHdrNetProfileGainTableNative.Evaluation?,
+    ): HdrNetInputExposureMatch? {
+        val solver = RawLegacyAutoExposureNativeBridge.Solver.create(referenceFrame)
+            ?: run {
+                PLog.i(TAG, "HDRNet input-exposure matching skipped: " +
+                    "no reliable reference cells; retaining input exposureEv=0")
+                return HdrNetInputExposureMatch(0f, false)
+            }
+        return solver.use {
+            if (!solver.configureHdrNetPriority()) return@use null
+            var candidateCount = 0
+            while (true) {
+                val exposureEv = solver.nextExposureEv() ?: break
+                val evaluation = renderSample(exposureEv) ?: return@use null
+                val grid = completedHdrNetLumaGrid(evaluation) ?: return@use null
+                if (!solver.submitCandidate(
+                        exposureEv,
+                        grid,
+                        HDRNET_GRID_COLUMNS,
+                        HDRNET_GRID_ROWS,
+                    )
+                ) return@use null
+                candidateCount++
+            }
+            solver.resultExposureEv()?.let { result ->
+                PLog.i(TAG, "HDRNet input-exposure matching result: " +
+                    "exposureEv=$result candidates=$candidateCount")
+                HdrNetInputExposureMatch(result, true)
+            }
+        }
+    }
+
+    private fun completedHdrNetLumaGrid(
+        evaluation: DngHdrNetProfileGainTableNative.Evaluation,
+    ): FloatArray? {
+        val width = evaluation.sampleWidth
+        val height = evaluation.sampleHeight
+        val rgb = evaluation.displayLinearRgb
+        if (width < HDRNET_GRID_COLUMNS || height < HDRNET_GRID_ROWS ||
+            rgb.size.toLong() != width.toLong() * height * 3
+        ) return null
+        val sums = DoubleArray(HDRNET_GRID_COLUMNS * HDRNET_GRID_ROWS)
+        val counts = IntArray(sums.size)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val offset = (y * width + x) * 3
+                val red = rgb[offset]
+                val green = rgb[offset + 1]
+                val blue = rgb[offset + 2]
+                if (!red.isFinite() || !green.isFinite() || !blue.isFinite()) return null
+                val cell = (y * HDRNET_GRID_ROWS / height) * HDRNET_GRID_COLUMNS +
+                    x * HDRNET_GRID_COLUMNS / width
+                // Match the displayed image: clip individual channels before the cell mean.
+                sums[cell] += red.coerceIn(0f, 1f) * 0.2126 +
+                    green.coerceIn(0f, 1f) * 0.7152 + blue.coerceIn(0f, 1f) * 0.0722
+                counts[cell]++
+            }
+        }
+        return FloatArray(sums.size) { (sums[it] / counts[it]).toFloat() }
+    }
+
+    /** Reconstructs the old displayed target for a DNG without its capture viewfinder. */
+    fun legacyHdrNetReference(
+        evaluation: DngHdrNetProfileGainTableNative.Evaluation,
+        postExposureEv: Float,
+    ): RawLegacyExposurePreviewFrame? {
+        if (evaluation.sampleWidth <= 0 || evaluation.sampleHeight <= 0 ||
+            evaluation.displayLinearRgb.size.toLong() !=
+                evaluation.sampleWidth.toLong() * evaluation.sampleHeight * 3 ||
+            !postExposureEv.isFinite()
+        ) return null
+        val pixels = RawLegacyAutoExposureNativeBridge.legacyHdrNetReferencePixels(
+            evaluation.displayLinearRgb,
+            postExposureEv,
+        ) ?: return null
+        return RawLegacyExposurePreviewFrame(
+            evaluation.sampleWidth,
+            evaluation.sampleHeight,
+            pixels,
+        )
+    }
+
     /**
      * Matches the composed HDRNet -> Dehaze/DHA RGB through the downstream SLM gain response.
      * HDRNet input exposure and HDR ratio remain fixed. Native selection maximizes the weighted
@@ -269,7 +361,7 @@ internal object RawLegacyAutoExposureMatcher {
     ): HdrNetPostExposureMatch? {
         if (sampleWidth <= 0 || sampleHeight <= 0 ||
             displayLinearRgb.size.toLong() != sampleWidth.toLong() * sampleHeight * 3 ||
-            displayLinearRgb.any { !it.isFinite() || it < 0f }
+            displayLinearRgb.any { !it.isFinite() || it !in 0f..1f }
         ) return null
         val solver = RawLegacyAutoExposureNativeBridge.Solver.create(referenceFrame)
             ?: run {

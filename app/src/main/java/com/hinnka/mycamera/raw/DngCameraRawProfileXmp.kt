@@ -1,6 +1,9 @@
 package com.hinnka.mycamera.raw
 
 import java.security.MessageDigest
+import java.io.StringReader
+import javax.xml.parsers.DocumentBuilderFactory
+import org.xml.sax.InputSource
 
 /**
  * Camera Raw treats ProfileGainTableMap and ProfileToneCurve as weighted profile operations.
@@ -11,6 +14,25 @@ internal object DngCameraRawProfileXmp {
 
     private const val CAMERA_RAW_VERSION = "16.0"
     private const val PROCESS_VERSION = "15.4"
+    private const val PHOTON_NAMESPACE = "https://hinnka.github.io/PhotonCamera/xmp/1.0/"
+
+    /** Reads the single Photon recipe summary from embedded DNG XMP. */
+    fun readSceneExposureSummary(xmp: String?): String? {
+        if (xmp == null || xmp.length > 1024 * 1024 ||
+            xmp.contains("<!DOCTYPE", ignoreCase = true)
+        ) return null
+        return runCatching {
+            val builder = DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = true
+                isExpandEntityReferences = false
+            }.newDocumentBuilder()
+            builder.setEntityResolver { _, _ -> InputSource(StringReader("")) }
+            val document = builder.parse(InputSource(StringReader(xmp)))
+            val summaries = document.getElementsByTagNameNS(PHOTON_NAMESPACE, "SummaryText")
+            if (summaries.length != 1) return@runCatching null
+            summaries.item(0).textContent?.takeIf { it.isNotBlank() && it.length <= 256 * 1024 }
+        }.getOrNull()
+    }
 
     fun build(
         profileLookName: String,

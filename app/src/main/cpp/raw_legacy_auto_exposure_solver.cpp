@@ -93,6 +93,37 @@ float HdrNetShadowPriority(float reference_luma) {
     return 1.0f + 0.25f * (1.0f - SmoothStep(0.02f, 0.25f, reference_luma));
 }
 
+bool BuildLegacyHdrNetReference(
+    const float* rgb,
+    int pixel_count,
+    float post_exposure_ev,
+    std::vector<jint>* pixels) {
+    if (rgb == nullptr || pixels == nullptr || pixel_count <= 0 ||
+        !std::isfinite(post_exposure_ev)) return false;
+    const float gain = std::exp2(post_exposure_ev);
+    if (!std::isfinite(gain) || gain <= 0.0f) return false;
+    namespace post = photon::hdrnet_post_exposure;
+    const auto gains = post::SplitGain(gain);
+    const auto encode = [](float linear) -> uint32_t {
+        const float srgb = linear <= 0.0031308f ? 12.92f * linear
+            : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+        return static_cast<uint32_t>(std::lround(std::clamp(srgb, 0.0f, 1.0f) * 255.0f));
+    };
+    pixels->resize(pixel_count);
+    for (int index = 0; index < pixel_count; ++index) {
+        const int offset = index * 3;
+        const post::Rgb source{rgb[offset], rgb[offset + 1], rgb[offset + 2]};
+        if (!std::isfinite(source.red) || !std::isfinite(source.green) ||
+            !std::isfinite(source.blue) ||
+            std::min({source.red, source.green, source.blue}) < 0.0f ||
+            std::max({source.red, source.green, source.blue}) > 1.0f) return false;
+        const auto display = post::Apply(source, gains);
+        (*pixels)[index] = static_cast<jint>(0xff000000U |
+            (encode(display.red) << 16U) | (encode(display.green) << 8U) | encode(display.blue));
+    }
+    return true;
+}
+
 float SpatialGridWeight(int cell) {
     const int grid_x = cell % kGridColumns;
     const int grid_y = cell / kGridColumns;
@@ -413,6 +444,19 @@ public:
         return IssueCandidate(*next);
     }
 
+    bool ConfigureHdrNetPriority() {
+        if (!samples_.empty() || pending_exposure_ev_.has_value()) return false;
+        if (hdrnet_priority_configured_) return true;
+        reference_weight_sum_ = 0.0f;
+        for (size_t index = 0; index < eligible_cell_indices_.size(); ++index) {
+            reference_cell_weights_[index] *=
+                HdrNetShadowPriority(reference_grid_lumas_[eligible_cell_indices_[index]]);
+            reference_weight_sum_ += reference_cell_weights_[index];
+        }
+        hdrnet_priority_configured_ = true;
+        return true;
+    }
+
     bool SubmitCandidate(
         float exposure_ev,
         const jint* pixels,
@@ -505,7 +549,7 @@ public:
         for (size_t index = 0; index < eligible_cell_indices_.size(); ++index) {
             const int cell = eligible_cell_indices_[index];
             const float reference_luma = reference_grid_lumas_[cell];
-            weights[index] *= HdrNetShadowPriority(reference_luma);
+            if (!hdrnet_priority_configured_) weights[index] *= HdrNetShadowPriority(reference_luma);
             boundaries.push_back(exposure_for_luma(cell,
                 reference_luma * std::exp2(-kMatchResidualToleranceEv)));
             boundaries.push_back(exposure_for_luma(cell,
@@ -914,6 +958,7 @@ private:
     float minimum_exposure_ev_ = kMinExposureEv;
     float maximum_exposure_ev_ = kMaxExposureEv;
     bool finished_ = false;
+    bool hdrnet_priority_configured_ = false;
     std::optional<float> pending_exposure_ev_;
     std::vector<float> reference_grid_lumas_;
     std::vector<int> eligible_cell_indices_;
@@ -1085,6 +1130,35 @@ Java_com_hinnka_mycamera_raw_RawLegacyAutoExposureNativeBridge_nativeSolveSingle
     };
     jfloatArray output = env->NewFloatArray(3);
     if (output != nullptr) env->SetFloatArrayRegion(output, 0, 3, values);
+    return output;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_hinnka_mycamera_raw_RawLegacyAutoExposureNativeBridge_nativeConfigureHdrNetPriority(
+    JNIEnv*, jobject, jlong handle) {
+    ExposureSolver* solver = FromHandle(handle);
+    return solver != nullptr && solver->ConfigureHdrNetPriority() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_hinnka_mycamera_raw_RawLegacyAutoExposureNativeBridge_legacyHdrNetReferencePixels(
+    JNIEnv* env, jobject, jfloatArray display_linear_rgb, jfloat post_exposure_ev) {
+    if (display_linear_rgb == nullptr) return nullptr;
+    const jsize value_count = env->GetArrayLength(display_linear_rgb);
+    if (value_count <= 0 || value_count % 3 != 0) return nullptr;
+    jfloat* rgb = env->GetFloatArrayElements(display_linear_rgb, nullptr);
+    if (rgb == nullptr) return nullptr;
+    std::vector<jint> pixels;
+    bool completed = false;
+    try {
+        completed = BuildLegacyHdrNetReference(rgb, value_count / 3, post_exposure_ev, &pixels);
+    } catch (const std::bad_alloc&) {
+        completed = false;
+    }
+    env->ReleaseFloatArrayElements(display_linear_rgb, rgb, JNI_ABORT);
+    if (!completed) return nullptr;
+    jintArray output = env->NewIntArray(value_count / 3);
+    if (output != nullptr) env->SetIntArrayRegion(output, 0, value_count / 3, pixels.data());
     return output;
 }
 

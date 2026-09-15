@@ -90,6 +90,11 @@ internal object RawLegacyAutoExposureNativeBridge {
             return nativeConfigureExposureBounds(handle, minimumEv, maximumEv)
         }
 
+        fun configureHdrNetPriority(): Boolean {
+            check(handle != 0L) { "Native exposure solver is closed" }
+            return nativeConfigureHdrNetPriority(handle)
+        }
+
         fun resultExposureEv(): Float? {
             check(handle != 0L) { "Native exposure solver is closed" }
             return nativeGetResultExposureEv(handle).takeIf { it.isFinite() }
@@ -154,6 +159,13 @@ internal object RawLegacyAutoExposureNativeBridge {
         minimumEv: Float,
         maximumEv: Float,
     ): Boolean
+
+    private external fun nativeConfigureHdrNetPriority(handle: Long): Boolean
+
+    external fun legacyHdrNetReferencePixels(
+        displayLinearRgb: FloatArray,
+        postExposureEv: Float,
+    ): IntArray?
 
     private external fun nativeGetResultExposureEv(handle: Long): Float
     private external fun nativeDestroy(handle: Long)

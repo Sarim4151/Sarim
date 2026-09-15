@@ -989,6 +989,8 @@ internal object DngPhotonProfileGainTableInputShader {
             sourceEnd = clamp(sourceEnd, sourceStart + ivec2(1), uImageSize);
 
             vec3 profileRgbSum = vec3(0.0);
+            float maximumShortIntensity = 0.0;
+            bool validIntensity = true;
             int sampleCount = 0;
             for (int y = sourceStart.y; y < sourceEnd.y; ++y) {
                 for (int x = sourceStart.x; x < sourceEnd.x; ++x) {
@@ -1008,18 +1010,34 @@ internal object DngPhotonProfileGainTableInputShader {
                     vec3 cameraRgb = storedCameraRgb * uSourceToShortGain;
                     // MGC clamps only positive overrange before box downsampling. Negative
                     // samples remain in the average and are clamped by the final box pass.
-                    vec3 profileRgb = min(uColorCorrectionMatrix * cameraRgb, vec3(1.0));
+                    vec3 unclippedProfileRgb = uColorCorrectionMatrix * cameraRgb;
+                    // Measure before HDRNet's model-input clamp and box average.
+                    // Small high-energy details can disappear in the model thumbnail
+                    // but still need valid PGTM knots in the full-resolution render.
+                    // Non-negative DNG input weights are componentwise monotone:
+                    // this also bounds engines that clear negative RGB before lookup.
+                    vec3 rangeRgb = max(unclippedProfileRgb, vec3(0.0));
+                    float tableIntensity = dot(rangeRgb, vec3(
+                        ${DngPhotonProfileGainTableGenerator.PXL_PROFILE_GAIN_TABLE_INPUT_WEIGHTS[0]},
+                        ${DngPhotonProfileGainTableGenerator.PXL_PROFILE_GAIN_TABLE_INPUT_WEIGHTS[1]},
+                        ${DngPhotonProfileGainTableGenerator.PXL_PROFILE_GAIN_TABLE_INPUT_WEIGHTS[2]}
+                    )) + min(rangeRgb.r, min(rangeRgb.g, rangeRgb.b)) *
+                        ${DngPhotonProfileGainTableGenerator.PXL_PROFILE_GAIN_TABLE_INPUT_WEIGHTS[3]} +
+                        max(rangeRgb.r, max(rangeRgb.g, rangeRgb.b)) *
+                        ${DngPhotonProfileGainTableGenerator.PXL_PROFILE_GAIN_TABLE_INPUT_WEIGHTS[4]};
+                    validIntensity = validIntensity && !any(isnan(unclippedProfileRgb)) &&
+                        !any(isinf(unclippedProfileRgb)) && !isnan(tableIntensity) && !isinf(tableIntensity);
+                    maximumShortIntensity = max(maximumShortIntensity, tableIntensity);
+                    vec3 profileRgb = min(unclippedProfileRgb, vec3(1.0));
                     profileRgbSum += profileRgb;
                     ++sampleCount;
                 }
             }
-            // MGC deliberately preserves negative black-referenced samples through the box
-            // downsample and into HDRNet. Only positive overrange is clipped. Clearing the
-            // negative tail here changes the first convolution's dark-region response and can
-            // drive the recovered affine grid to its 0.03 minimum-gain floor.
-            vec3 modelRgb = min(
+            // MGC's first CCM pass retains signed noise while limiting positive
+            // overrange; the final box pass clamps the completed mean to [0, 1].
+            vec3 modelRgb = clamp(
                 profileRgbSum / float(max(sampleCount, 1)),
-                vec3(1.0)
+                vec3(0.0), vec3(1.0)
             );
             // This TFLite is the 1x2 normal HDRNet model recovered from MGC's TensorFlow
             // graph. Its original fused first-convolution shader constructs channel four from
@@ -1037,6 +1055,9 @@ internal object DngPhotonProfileGainTableInputShader {
             hdrNetInput[outputIndex + 1] = modelRgb.g;
             hdrNetInput[outputIndex + 2] = modelRgb.b;
             hdrNetInput[outputIndex + 3] = longLuma;
+            int rangeIndex = OUTPUT_SIZE.x * OUTPUT_SIZE.y * 4 +
+                outputPosition.y * OUTPUT_SIZE.x + outputPosition.x;
+            hdrNetInput[rangeIndex] = validIntensity ? maximumShortIntensity : -1.0;
         }
     """.trimIndent()
 
@@ -1355,7 +1376,9 @@ internal class DngPhotonProfileGainTableAlgorithm {
         val outputRotation: Int,
         val hdrRatio: Float,
         val sourceToShortGain: Float,
-        /** Persisted downstream HDRNet exposure used when regenerating without a viewfinder. */
+        /** Exposure applied before model preparation, restored with its own recipe contract. */
+        val hdrNetInputExposureEv: Float? = null,
+        /** Legacy downstream exposure, used only to reconstruct a migration brightness target. */
         val hdrNetPostExposureEv: Float? = null,
         val colorCorrectionMatrix: FloatArray,
         val hueSatMap: DcpHueSatMap?,
@@ -1375,7 +1398,16 @@ internal class DngPhotonProfileGainTableAlgorithm {
         val map: DngProfileGainTableMap,
         val hdrRatio: Float? = null,
         val sourceToShortGain: Float? = null,
+        val hdrNetInputExposureEv: Float? = null,
         val hdrNetPostExposureEv: Float? = null,
+    )
+
+    private data class HdrNetExposureCandidate(
+        val inputExposureEv: Float,
+        val plan: HdrNetProfileGainTablePlan,
+        val modelInput: FloatArray,
+        val coefficients: FloatArray,
+        val evaluation: DngHdrNetProfileGainTableNative.Evaluation,
     )
 
     private data class GpuPhotonGainCurves(
@@ -1501,6 +1533,8 @@ internal class DngPhotonProfileGainTableAlgorithm {
         val inputFloatCount = DngPhotonProfileGainTableGenerator.HDRNET_INPUT_WIDTH *
             DngPhotonProfileGainTableGenerator.HDRNET_INPUT_HEIGHT * 4
         val inputByteCount = inputFloatCount * Float.SIZE_BYTES
+        val storageFloatCount = inputFloatCount + inputFloatCount / 4
+        val storageByteCount = storageFloatCount * Float.SIZE_BYTES
         RawGlesProgram.logErrors("before HDRNet SSBO capability query")
         val maxSsboBytes = LongArray(1)
         GLES30.glGetInteger64v(GLES31.GL_MAX_SHADER_STORAGE_BLOCK_SIZE, maxSsboBytes, 0)
@@ -1515,10 +1549,10 @@ internal class DngPhotonProfileGainTableAlgorithm {
         }
         val maxSsboBindings = IntArray(1)
         GLES30.glGetIntegerv(GLES31.GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS, maxSsboBindings, 0)
-        if (inputByteCount > usableMaxSsboBytes || maxSsboBindings[0] < 2) {
+        if (storageByteCount > usableMaxSsboBytes || maxSsboBindings[0] < 2) {
             PLog.e(
                 TAG,
-                "HDRNet SSBO requirements unavailable: inputBytes=$inputByteCount " +
+                "HDRNet SSBO requirements unavailable: inputBytes=$storageByteCount " +
                     "maxBlockBytes=$usableMaxSsboBytes bindings=${maxSsboBindings[0]}",
             )
             return null
@@ -1529,7 +1563,7 @@ internal class DngPhotonProfileGainTableAlgorithm {
             GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, bufferIds[0])
             GLES31.glBufferData(
                 GLES31.GL_SHADER_STORAGE_BUFFER,
-                inputByteCount,
+                storageByteCount,
                 null,
                 GLES31.GL_DYNAMIC_READ,
             )
@@ -1590,111 +1624,154 @@ internal class DngPhotonProfileGainTableAlgorithm {
                 activeWarpParameters.size / 8,
             )
             val dehazeTuning = PhotonCoreImagingTuning.dehaze.normalized()
-            val modelInputBuffer = ByteBuffer.allocateDirect(inputFloatCount * Float.SIZE_BYTES)
+            val modelInputBuffer = ByteBuffer.allocateDirect(inputByteCount)
                 .order(ByteOrder.nativeOrder())
             val modelOutputBuffer = ByteBuffer.allocateDirect(
                 DngPhotonProfileGainTableGenerator.HDRNET_OUTPUT_FLOAT_COUNT * Float.SIZE_BYTES,
             ).order(ByteOrder.nativeOrder())
 
-            val plan = basePlan
-            GLES31.glUseProgram(hdrNetInputProgram)
-            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 0, bufferIds[0])
-            GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 1, bufferIds[1])
-            GLES31.glActiveTexture(GLES31.GL_TEXTURE0 + LINEAR_RGB_TEXTURE_UNIT)
-            GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, linearRgbTextureId)
-            GLES31.glUniform1f(
-                GLES31.glGetUniformLocation(hdrNetInputProgram, "uSourceToShortGain"),
-                plan.sourceToShortGain,
-            )
-            GLES31.glUniform1f(
-                GLES31.glGetUniformLocation(hdrNetInputProgram, "uHdrRatio"),
-                plan.hdrRatio,
-            )
-            GLES31.glDispatchCompute(
-                GlesComputeWorkGroup.imageGroupCount(
-                    DngPhotonProfileGainTableGenerator.HDRNET_INPUT_WIDTH,
-                ),
-                GlesComputeWorkGroup.imageGroupCount(
-                    DngPhotonProfileGainTableGenerator.HDRNET_INPUT_HEIGHT,
-                ),
-                1,
-            )
-            GLES31.glMemoryBarrier(
-                GLES31.GL_SHADER_STORAGE_BARRIER_BIT or GLES31.GL_BUFFER_UPDATE_BARRIER_BIT,
-            )
-            RawGlesProgram.logErrors("prepare HDRNet input")
-            val modelInput = readFloatStorageBuffer(
-                bufferId = bufferIds[0],
-                floatCount = inputFloatCount,
-                label = "HDRNet input",
-            ) ?: return null
-            if (modelInput.any { !it.isFinite() }) {
-                PLog.e(TAG, "HDRNet input contains a non-finite value")
-                return null
-            }
-            modelInputBuffer.clear()
-            modelInputBuffer.asFloatBuffer().put(modelInput)
-            modelInputBuffer.rewind()
-            modelOutputBuffer.clear()
-            interpreter.run(modelInputBuffer, modelOutputBuffer)
-            modelOutputBuffer.rewind()
-            val coefficients = FloatArray(
-                DngPhotonProfileGainTableGenerator.HDRNET_OUTPUT_FLOAT_COUNT,
-            )
-            modelOutputBuffer.asFloatBuffer().get(coefficients)
-            val evaluation = DngPhotonProfileGainTableGenerator.evaluateHdrNetDehaze(
-                plan = plan,
-                coefficients = coefficients,
-                modelInput = modelInput,
-                outputRotation = input.outputRotation,
-                dehazeTuning = dehazeTuning,
-            ) ?: return null
-            val match = input.viewfinderReference
-                ?.takeIf { HDRNET_VIEWFINDER_BRIGHTNESS_MATCH_ENABLED }
-                ?.let { reference ->
-                    RawLegacyAutoExposureMatcher.solveHdrNetPostExposure(
-                        referenceFrame = reference,
-                        displayLinearRgb = evaluation.displayLinearRgb,
-                        sampleWidth = evaluation.sampleWidth,
-                        sampleHeight = evaluation.sampleHeight,
-                    )
-                }
-            val restoredPostExposureEv = input.hdrNetPostExposureEv
-                ?.takeIf { HDRNET_VIEWFINDER_BRIGHTNESS_MATCH_ENABLED }
-                ?.takeIf(Float::isFinite)
-                ?.coerceIn(
-                    MeteringSystem.RAW_EXPOSURE_MIN_EV,
-                    MeteringSystem.RAW_EXPOSURE_MAX_EV,
+            // A candidate owns all data derived from its input exposure. In particular,
+            // scaling an already-clipped tensor or reusing the previous inference/Dehaze
+            // would evaluate a different response from the one baked into the selected PGTM.
+            var cachedCandidate: HdrNetExposureCandidate? = null
+            fun candidate(inputExposureEv: Float): HdrNetExposureCandidate? {
+                cachedCandidate?.takeIf { it.inputExposureEv == inputExposureEv }?.let { return it }
+                if (!inputExposureEv.isFinite() || inputExposureEv !in
+                    MeteringSystem.RAW_EXPOSURE_MIN_EV..MeteringSystem.RAW_EXPOSURE_MAX_EV
+                ) return null
+                val effectiveShortGain = input.sourceToShortGain * 2f.pow(inputExposureEv)
+                GLES31.glUseProgram(hdrNetInputProgram)
+                GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 0, bufferIds[0])
+                GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 1, bufferIds[1])
+                GLES31.glActiveTexture(GLES31.GL_TEXTURE0 + LINEAR_RGB_TEXTURE_UNIT)
+                GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, linearRgbTextureId)
+                GLES31.glUniform1f(
+                    GLES31.glGetUniformLocation(hdrNetInputProgram, "uSourceToShortGain"),
+                    effectiveShortGain,
                 )
-            val postExposureEv = match?.exposureEv ?: restoredPostExposureEv ?: 0f
-            val postExposureSource = when {
-                !HDRNET_VIEWFINDER_BRIGHTNESS_MATCH_ENABLED -> "DISABLED"
-                match != null -> "VIEWFINDER_MATCH"
-                restoredPostExposureEv != null -> "PERSISTED_CAPTURE_MATCH"
+                GLES31.glUniform1f(
+                    GLES31.glGetUniformLocation(hdrNetInputProgram, "uHdrRatio"),
+                    basePlan.hdrRatio,
+                )
+                GLES31.glDispatchCompute(
+                    GlesComputeWorkGroup.imageGroupCount(
+                        DngPhotonProfileGainTableGenerator.HDRNET_INPUT_WIDTH,
+                    ),
+                    GlesComputeWorkGroup.imageGroupCount(
+                        DngPhotonProfileGainTableGenerator.HDRNET_INPUT_HEIGHT,
+                    ),
+                    1,
+                )
+                GLES31.glMemoryBarrier(
+                    GLES31.GL_SHADER_STORAGE_BARRIER_BIT or GLES31.GL_BUFFER_UPDATE_BARRIER_BIT,
+                )
+                RawGlesProgram.logErrors("prepare HDRNet input")
+                val preparedInput = readFloatStorageBuffer(
+                    bufferId = bufferIds[0],
+                    floatCount = storageFloatCount,
+                    label = "HDRNet input",
+                ) ?: return null
+                if (preparedInput.any { !it.isFinite() }) {
+                    PLog.e(TAG, "HDRNet input contains a non-finite value")
+                    return null
+                }
+                var maximumShortIntensity = 0f
+                for (index in inputFloatCount until storageFloatCount) {
+                    val intensity = preparedInput[index]
+                    if (intensity < 0f) {
+                        PLog.e(TAG, "HDRNet PGTM range contains an invalid source intensity")
+                        return null
+                    }
+                    maximumShortIntensity = max(maximumShortIntensity, intensity)
+                }
+                val maxTextureSize = IntArray(1)
+                GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, maxTextureSize, 0)
+                val tableTextureHeight = basePlan.grid.mapPointsH * basePlan.grid.mapPointsV
+                if (maxTextureSize[0] < tableTextureHeight) {
+                    PLog.e(TAG, "HDRNet PGTM texture height $tableTextureHeight exceeds ${maxTextureSize[0]}")
+                    return null
+                }
+                val plan = DngPhotonProfileGainTableGenerator.hdrNetPlan(
+                    rendererBaselineExposureEv = input.rendererBaselineExposureEv,
+                    hdrRatio = input.hdrRatio,
+                    sourceToShortGain = effectiveShortGain,
+                    samplingArea = samplingArea,
+                    maximumShortIntensity = maximumShortIntensity,
+                    maximumTablePoints = maxTextureSize[0],
+                ) ?: return null
+                PLog.d(TAG, "HDRNET_PGTM_RANGE maxShortIntensity=$maximumShortIntensity " +
+                    "pointsN=${plan.pointCount} inputRangeScale=${plan.mapInputRangeScale} " +
+                    "lastShortIntensity=${(plan.pointCount - 1f) / (plan.pointCount * plan.mapInputRangeScale)} " +
+                    "source=${linearRgbTextureWidth}x$linearRgbTextureHeight")
+                val modelInput = preparedInput.copyOf(inputFloatCount)
+                modelInputBuffer.clear()
+                modelInputBuffer.asFloatBuffer().put(modelInput)
+                modelInputBuffer.rewind()
+                modelOutputBuffer.clear()
+                interpreter.run(modelInputBuffer, modelOutputBuffer)
+                modelOutputBuffer.rewind()
+                val coefficients = FloatArray(
+                    DngPhotonProfileGainTableGenerator.HDRNET_OUTPUT_FLOAT_COUNT,
+                )
+                modelOutputBuffer.asFloatBuffer().get(coefficients)
+                val evaluation = DngPhotonProfileGainTableGenerator.evaluateHdrNetDehaze(
+                    plan = plan,
+                    coefficients = coefficients,
+                    modelInput = modelInput,
+                    outputRotation = input.outputRotation,
+                    dehazeTuning = dehazeTuning,
+                ) ?: return null
+                return HdrNetExposureCandidate(
+                    inputExposureEv, plan, modelInput, coefficients, evaluation,
+                ).also { cachedCandidate = it }
+            }
+            val restoredInputExposureEv = input.hdrNetInputExposureEv
+                ?.takeIf { it.isFinite() && it in
+                    MeteringSystem.RAW_EXPOSURE_MIN_EV..MeteringSystem.RAW_EXPOSURE_MAX_EV }
+            // A legacy post-EV is not numerically equivalent to an input EV. Reconstruct
+            // its old displayed brightness, then solve the new complete processing chain.
+            val legacyPostExposureEv = input.hdrNetPostExposureEv
+                ?.takeIf { it.isFinite() && it in
+                    MeteringSystem.RAW_EXPOSURE_MIN_EV..MeteringSystem.RAW_EXPOSURE_MAX_EV }
+            val reference = if (restoredInputExposureEv != null) null else {
+                input.viewfinderReference ?: legacyPostExposureEv?.let { legacyEv ->
+                    val original = candidate(0f) ?: return null
+                    RawLegacyAutoExposureMatcher.legacyHdrNetReference(original.evaluation, legacyEv)
+                        ?: return null
+                }
+            }
+            val exposureMatch = if (restoredInputExposureEv == null &&
+                HDRNET_VIEWFINDER_BRIGHTNESS_MATCH_ENABLED && reference != null) {
+                RawLegacyAutoExposureMatcher.solveHdrNetInputExposure(reference) { ev ->
+                    candidate(ev)?.evaluation
+                } ?: return null
+            } else null
+            val inputExposureEv = restoredInputExposureEv ?: exposureMatch?.exposureEv ?: 0f
+            val selected = candidate(inputExposureEv) ?: return null
+            val plan = selected.plan
+            val modelInput = selected.modelInput
+            val coefficients = selected.coefficients
+            val evaluation = selected.evaluation
+            val exposureSource = when {
+                restoredInputExposureEv != null -> "PERSISTED_INPUT_EXPOSURE"
+                exposureMatch?.matchedReference == false -> "UNUSABLE_REFERENCE"
+                input.viewfinderReference != null -> "VIEWFINDER_MATCH"
+                legacyPostExposureEv != null -> "LEGACY_BRIGHTNESS_TARGET"
                 else -> "NONE"
             }
-            PLog.i(
-                TAG,
-                "HDRNET_MATCH stage=SELECTED shortGain=${plan.sourceToShortGain} " +
-                    "hdrRatio=${plan.hdrRatio} " +
-                    "postExposureEv=$postExposureEv " +
-                    "postExposureSource=$postExposureSource " +
-                    "matchRate=${match?.matchRate} " +
-                    "meanAbsoluteErrorEv=${match?.meanAbsoluteErrorEv} " +
-                    "postDehazeP99Peak=${evaluation.postDehazeP99Peak} " +
-                    "dehazeActive=${dehazeTuning.isActive} " +
-                    "dehazeLow=${evaluation.dehazeCurve.hazePointLow} " +
-                    "dehazeHigh=${evaluation.dehazeCurve.hazePointHigh} " +
-                    "dhaScale=${evaluation.dehazeCurve.highlightScale} " +
-                    "dhaDetected=${evaluation.dehazeCurve.detectedHighlightScale} " +
-                    "dehazeSamples=${evaluation.dehazeCurve.sampledPixelCount}",
-            )
+            PLog.i(TAG, "HDRNET_MATCH stage=SELECTED " +
+                "physicalShortGain=${input.sourceToShortGain} effectiveShortGain=${plan.sourceToShortGain} " +
+                "hdrRatio=${plan.hdrRatio} inputExposureEv=$inputExposureEv source=$exposureSource " +
+                "postDehazeP99Peak=${evaluation.postDehazeP99Peak} " +
+                "dehazeLow=${evaluation.dehazeCurve.hazePointLow} " +
+                "dehazeHigh=${evaluation.dehazeCurve.hazePointHigh} " +
+                "dhaScale=${evaluation.dehazeCurve.highlightScale} pointsN=${plan.pointCount}")
             val map = DngPhotonProfileGainTableGenerator.mapFromHdrNetCoefficients(
                 plan = plan,
                 coefficients = coefficients,
                 modelInput = modelInput,
                 dehazeCurve = evaluation.dehazeCurve,
-                postExposureEv = postExposureEv,
+                postExposureEv = 0f,
             ) ?: return null
             val textureId = uploadProfileGainTableTexture(map) ?: return null
             try {
@@ -1706,8 +1783,8 @@ internal class DngPhotonProfileGainTableAlgorithm {
             return Output(
                 map = map,
                 hdrRatio = plan.hdrRatio,
-                sourceToShortGain = plan.sourceToShortGain,
-                hdrNetPostExposureEv = postExposureEv,
+                sourceToShortGain = input.sourceToShortGain,
+                hdrNetInputExposureEv = inputExposureEv,
             )
         } catch (error: Throwable) {
             PLog.e(TAG, "HDRNet ProfileGainTableMap generation failed", error)

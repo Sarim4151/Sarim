@@ -1,103 +1,101 @@
-# Photon HDRNet Dehaze + DHA 链路
+# Photon HDRNet、Dehaze 与曝光匹配
 
-Photon 不再运行独立的全分辨率 Dehaze pass。Dehaze 与 DHA 只属于 HDRNet 路径，并和
-HDRNet 的 bilateral-grid 输出一起烘焙到 DNG `ProfileGainTableMap2`。
+HDRNet 和 Dehaze/DHA 的结果共同烘焙到 DNG `ProfileGainTableMap2`。运行期只查一次
+PGTM，不另加全分辨率 Dehaze，也不在生成后追加曝光匹配增益。
 
-## 顺序
+## 曝光与处理顺序
 
-MGC v25 的低频处理顺序是 LTM → `DehazeAndDha` → `ShadowLevelMatching` →
-`ApplyColorMap`。Photon 用 HDRNet/PGTM 代替 LTM，因此对应顺序为：
-
-```text
-final-short linear working RGB
-  -> one HDRNet model input / bilateral-grid inference with fixed short gain and HDR ratio
-  -> HDRNet output (256 x 192)
-  -> whole-image Dehaze + DHA histogram and curve
-  -> composed HDRNet + Dehaze/DHA output
-  -> full-coverage 8 x 6 viewfinder matching with modest shadow preference
-  -> downstream SLM rolloff / digital gain
-  -> bake the fixed HDRNet grid, Dehaze/DHA curve and gain response into PGTM
-  -> DCP HueSatMap / profile exposure / LookTable / tone / output
-```
-
-Dehaze 不进入 HDRNet 模型输入。HDR ratio 与 short gain 由拍摄阶段确定，取景器匹配不得修改
-这两个量，否则会把 HDRNet 与 Dehaze/DHA 形成的动态范围和反差当作曝光误差抵消。Dehaze 的
-统计源是唯一一次推理后的完整 256×192 HDRNet 输出；8×6 网格的每格覆盖对应区域的全部像素，
-只用于求一个 HDRNet 下游增益参数，不用于估算 Dehaze 曲线。后处理结果的全图 P99 最大通道
-只用于诊断，不再限制正向匹配或重生成时恢复的参数。通用匹配范围仍为 `-4..4 EV`。
-
-## 取景器权重与 rolloff
-
-目标仍是拍摄时对齐后的取景器图。保留现有参考可靠性、8×6 空间权重、人像优先和 ±0.1 EV
-匹配评分；HDRNet 路径只在原权重上叠加 `1 + 0.25*(1-smoothstep(0.02, 0.25, referenceLuma))`。
-亮度为取景器 sRGB 解码后的线性 Rec.709 luma，可靠暗部最多增加 25% 权重；原有近黑和
-饱和参考排除规则继续生效。Classic/Local Laplacian 的权重不变。
-
-匹配输出 `g=2^postExposureEv`，按照 MGC V25 SLM 的 further-gain split 处理：
+物理 AE 的 `sourceToShortGain=s0`、`hdrRatio=r` 与渲染输入曝光 `e` 分开保存。
+`e` 调整短、长曝光的共同输入尺度，不改变物理 TET 和长短曝光比例：
 
 ```text
-g <= 1:       rolloff = 1, digital = g
-1 < g < 1.25: rolloff = g, digital = 1
-g >= 1.25:
-  t = clamp(2*(g-1.25), 0, 1)
-  rolloff = 1.25 + 0.5*(t-0.5*t*t)
-  digital = g / rolloff
+RAW camera RGB
+  -> s0 * 2^e -> working-space CCM
+  -> per-pixel min(RGB, 1) -> box average -> clamp(mean, 0, 1)
+  -> HDRNet tensor [short R, G, B, min(short BT601 luma * r, 12)]
+  -> inference -> HDRNet RGB -> Dehaze/DHA
+  -> viewfinder brightness score
+  -> bake this same candidate into PGTM -> profile / film rendering
 ```
 
-逐像素取 Dehaze/DHA 后的 `m=max(RGB)`，使用共享增益：
+曝光必须参与非线性响应的求解。旧链在固定 HDRNet/Dehaze 输出后再乘匹配增益；当匹配为
+负 EV 时，已经被压缩或裁剪的白色高光会变成灰色平台，原有差异无法通过后乘增益恢复。
+仅延后 RGB 裁剪或扩大 PGTM 范围不足以修复这类分块。现在每个候选都从未裁剪源纹理
+重新准备模型输入、推理并重算 Dehaze，最终表使用选中候选的全部数据。不能缩放旧 tensor、
+复用上一候选的系数或去雾曲线。
+
+模型准备的裁剪顺序对应原 MGC `apply_lsc_and_ccm.frag` 和最终 box pass：逐像素保留负值、
+仅限制正上界，完成平均后再限制到 `[0,1]`。HDRNet guide 是原 protobuf 的 16 项 hinge 和，
+两侧仿射均为 `[1,0]`。原 renderer 的输入也经过 CCM 上裁剪；不能把原 apply shader 没有
+显式 luma clamp 理解为模型支持任意未归一化高光外推。
+
+## 匹配
+
+沿用原 8×6 全图参考、空间权重、可靠暗/亮端排除与人像优先。HDRNet 单独启用
+`1 + 0.25*(1-smoothstep(0.02,0.25,referenceLuma))` 阴影权重，Classic 不变。
+每个候选按 RGB 逐像素完成最终通道裁剪、计算线性 Rec.709 亮度，再取每格均值。
+不能先平均 RGB 再裁剪，也不能给候选结果追加 EV。
+
+使用既有原生候选搜索和评分：优先最大化 ±0.1 EV 内的加权匹配率，其次比较平均 EV 误差
+和 robust loss。候选范围为用户支持的 `-4..4 EV`，搜索次数有界。GPU 输入缓冲和推理器
+复用，内存只保留最近一个完整候选；如果最终选择了较早候选，就重新计算它再烘焙。
+
+## Dehaze 契约
+
+Dehaze 不进入模型 tensor。统计来自当前候选唯一一次 HDRNet 推理后的完整 256×192 图像：
+
+- 877-bin haze histogram；
+- 5251-bin highlight histogram；
+- 20 个低百分位样本决定 atmospheric haze point；
+- 5 个高百分位样本决定 DHA highlight scale，限制到 `0.78..1.7`；
+- 低端二次段和高端线性段保持数值及斜率连续。
+
+保留原有有界 HDRNet/Dehaze 响应。新链不再用负的匹配增益压暗已经裁剪的结果。
+Dehaze 的本地开关与强度仍来自 `PhotonCoreImagingTuning.dehaze`；每个曝光候选重新计算曲线，
+P99 只用于诊断，不限制曝光结果。
+
+## PGTM 范围与曝光计数
+
+内部 plan 使用有效 short gain `s=s0*2^e`。N 权重同时消除渲染 BaselineExposure 并带入
+这个有效增益；native 烘焙分母仍还原为实际 `RAW*BaselineGain`，因此输入曝光仅烘焙一次。
+不修改物理 `sourceToShortGain` 的持久化值，不将用户编辑 EV 混入输入配方。
+
+全分辨率 RGB 可能超过模型输入的上界。DNG 按 `tableIndex=N*pointCount` 查表，越过末端
+后只返回最后 gain；原 RGB 继续增大会导致高光重新线性变亮。GPU 在逐像素裁剪和 box
+平均之前，用 PXL 五权重计算最大短曝光强度 `M`。范围统计单独将负 RGB 归零，以同时覆盖
+保留或清除负值的渲染器，不改变模型 tensor。
 
 ```text
-G = 1 + (rolloff-1)*(1-m)^2
-gain = digital                              // rolloff*digital < 1
-gain = (1e-7 + m*digital*G) / (m+1e-7)        // 其余情况
-outputRGB = clamp(RGB * gain, 0, 1)
+pointCount = max(257, ceil(M*257)+1)
+rangeScale = 257/pointCount
+storedWeights = PXLWeights * s / BaselineGain * rangeScale
 ```
 
-亮部的 rolloff 增益自然减弱，rolloff 最大为 1.5，剩余增益由 digital 承担；不再用 P99
-硬裁剪匹配 EV。这里只使用 SLM 的增益拆分和 rolloff，保留单路 HDRNet 图像与取景器目标。
+原有强度节点间距保持为 `1/257`。节点上限为 `min(4096,GL_MAX_TEXTURE_SIZE)`，达到上限
+时使用 `rangeScale=(pointCount-1)/(pointCount*M)` 保证完整覆盖。上传纹理高度固定为
+`64*48`，生成前检查设备能力。极暗 cell 的中性轴判定使用按权重和归一的阈值，不随范围
+缩放改变。DNG 读取端无需 Photon 特殊查表规则。
 
-求解器接收完整的旋转对齐 RGB，每个候选先逐像素执行上述响应及通道截断，再计算每格平均
-Rec.709 亮度。不能先平均亮度再做 rolloff：同格内亮暗/彩色混合的结果会不同。求解器反解
-各格 ±0.1 EV 匹配区间边界，沿用加权匹配率、平均 EV 误差及 robust loss 的选择顺序。
-HDRNet 和 Dehaze 只计算一次。
+## 持久化与旧文件
 
-## 曲线契约
+新配方保存物理 `s0/r`、`hdrNetInputExposureEv` 和合约 `hdrnet_input_viewfinder_v1`。
+新写入清除旧 post EV 字段；完整配方也进入 DNG XMP SummaryText，独立导入有效 Photon
+PGTM 时恢复，不能仅依赖相册 metadata.json。HDR 场景参考采用 `s0*2^e*r`，后续用户编辑
+EV 仍单独应用一次。
 
-HDRNet 输出先转换到原版 12-bit 统计域：
+- 普通打开、开关动态范围优化：复用有效内嵌 Photon PGTM。
+- 新配方显式重生成：恢复 `s0/r/e`，只计算这一候选，不重新匹配。
+- 旧配方显式重生成：用旧 HDRNet/Dehaze 和旧 SLM 响应重建亮度参考，再求解新的输入 EV。
+  旧 post EV 不能直接解释为 input EV；目标迁移只约束亮度，不要求继续保留旧高光压缩失真。
+- 没有参考和有效配方的 RAW：采用 `e=0`。
+- 参考没有可靠计量区域（如全黑或全白）：记录 `UNUSABLE_REFERENCE`，采用同样的 `e=0`
+  策略；候选准备、推理或原生提交失败仍终止生成，不静默降级。
 
-- 877-bin haze histogram：`clamp(R+G+B, 0, 876)`；
-- 5251-bin highlight histogram：`max(RGB) + (max-min)/8`；
-- 20 个低百分位样本决定两组 atmospheric haze point；
-- 5 个高百分位样本决定 DHA highlight scale，并限制到 `0.78..1.7`；
-- 最终曲线由低端二次段和高端线性段组成，数值和斜率连续。
+显式刷新延续当前处理结果重生成的既有语义，不覆写原始 DNG。原内嵌表与原配方仍是旧文件
+再次显式重生成的参考。新拍摄 DNG 保存的则是选中候选的完整表与新配方。
 
-合成时，曲线按 `(R+G+B)/3` 求共享 gain 并同时乘到三个通道。PGTM 是标量表，生成时使用
-固定的模型输入，从每个 64×48 空间 cell 保留局部色度与 PXL N 强度的比例，在 257 点强度轴
-上重建 RGB，再单独计算 Rec.601 HDRNet guide。PXL N 包含 min/max 通道权重，不能直接当作
-HDRNet luma，否则彩色区域的 rolloff 强度会偏移。随后执行相同的 Dehaze/DHA 和 RGB rolloff，
-取结果亮度并反解 ACR3 输入。黑色或负噪声使源 luma 不可由正标量增益表达时，该 cell 的表
-曲线定义在中性灰轴上。PGTM 的空间/强度采样与标量格式仍有限制。运行期只查一次
-PGTM，不会再次执行 HDRNet、Dehaze 或 DHA。
+## 日志
 
-## 本地控制与曝光匹配持久化
-
-去雾直接使用 `PhotonCoreImagingTuning.dehaze` 的本地默认值：
-
-- `enabled`
-- `strength`（`0..4`）
-- `dynamicHighlightStrength`（`0..1`）
-
-默认启用，强度均为 `1`，不做持久化读写。参数只在 HDRNet PGTM 生成或重新生成时消费；Classic 与 Local
-Laplacian 路径不执行 Dehaze/DHA。拍摄时得到的 HDRNet 下游匹配曝光独立保存，重新生成 PGTM
-时恢复并使用相同 rolloff，仅按通用 EV 范围约束；不会折回 short gain、HDR ratio 或
-BaselineExposure。持久化契约为 `hdrnet_post_dehaze_viewfinder_rolloff_v2`；旧的线性增益
-`hdrnet_post_dehaze_viewfinder_v1` 参数不作为新响应的匹配结果恢复。没有兼容匹配值且没有
-取景器时使用 0 EV。
-已有 DNG 的 PGTM 不在最终渲染时叠加独立去雾。
-
-## 匹配日志
-
-`PLog_RawExposureMatch` 输出 Classic/Local Laplacian 的候选结果，以及 HDRNet 单曝光最终匹配率、
-平均 EV 误差和校正量。`DngPhotonProfileGainTableAlgorithm` 另外输出固定的 short/ratio、匹配
-参数、诊断用 P99 peak、haze point、DHA scale 与全图统计样本数。native PGTM 的
-`POST_EXPOSURE` 日志同时记录总 gain、rolloffGain 与 digitalGain。
+`HDRNET_PGTM_RANGE` 记录每次准备的最大强度、节点数和范围比例。
+`HDRNET_MATCH stage=SELECTED` 记录物理与有效 short gain、ratio、input EV、来源、Dehaze
+参数和节点数。原生 matcher 记录候选评分，用于区分匹配变化、配方恢复和模型输入变化。

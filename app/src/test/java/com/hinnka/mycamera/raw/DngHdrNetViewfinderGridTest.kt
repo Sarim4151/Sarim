@@ -4,10 +4,52 @@ import com.hinnka.mycamera.processor.PhotonDehazeTuning
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeNoException
 import org.junit.Test
 
 class DngHdrNetViewfinderGridTest {
+    @Test
+    fun pgtmRangeCoversHighlightsWithoutMovingExistingKnots() {
+        val base = checkNotNull(DngPhotonProfileGainTableGenerator.hdrNetPlan(0f, 2f, 1f))
+        val expanded = checkNotNull(DngPhotonProfileGainTableGenerator.hdrNetPlan(
+            rendererBaselineExposureEv = 0f,
+            hdrRatio = 2f,
+            sourceToShortGain = 1f,
+            maximumShortIntensity = 1.6f,
+        ))
+        assertEquals(257, base.pointCount)
+        assertEquals(413, expanded.pointCount)
+        for (point in 1 until base.pointCount) {
+            val originalCoordinate = point.toFloat() / base.pointCount
+            val expandedCoordinate = point.toFloat() / expanded.pointCount / expanded.mapInputRangeScale
+            assertEquals(originalCoordinate, expandedCoordinate, 2e-7f)
+        }
+        val lastKnot = (expanded.pointCount - 1f) / expanded.pointCount
+        assertTrue(1.6f * expanded.mapInputRangeScale <= lastKnot)
+        assertEquals(1f, expanded.mapInputWeights.sum() / expanded.mapInputRangeScale, 1e-6f)
+    }
+
+    @Test
+    fun pgtmTextureLimitStillCoversTheCompleteIntensityRange() {
+        val plan = checkNotNull(DngPhotonProfileGainTableGenerator.hdrNetPlan(
+            rendererBaselineExposureEv = 3f,
+            hdrRatio = 2f,
+            sourceToShortGain = 1.7f,
+            maximumShortIntensity = 32f,
+            maximumTablePoints = 1024,
+        ))
+        assertEquals(1024, plan.pointCount)
+        val sourceCoordinate = 32f / plan.sourceToShortGain
+        val tableIndex = sourceCoordinate * plan.mapInputWeights.sum() *
+            plan.rendererBaselineGain * plan.pointCount
+        assertEquals(1023f, tableIndex, 0.001f)
+        assertNull(DngPhotonProfileGainTableGenerator.hdrNetPlan(0f, 2f, 1f,
+            maximumShortIntensity = Float.NaN))
+        assertNull(DngPhotonProfileGainTableGenerator.hdrNetPlan(0f, 2f, 1f,
+            maximumTablePoints = 128))
+    }
+
     @Test
     fun displayLinearGridMatchesClassicDomainAndIgnoresRendererBaseline() {
         val modelInput = FloatArray(

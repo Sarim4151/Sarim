@@ -829,6 +829,7 @@ object RawProcessor {
             hdrRatio = captureProfile?.hdrRatio,
             finalShortGain = captureProfile?.finalShortGain,
             hdrNetPostExposureEv = captureProfile?.hdrNetPostExposureEv,
+            hdrNetInputExposureEv = captureProfile?.hdrNetInputExposureEv,
             rawSceneExposureSummaryText = captureProfile?.rawSceneExposureSummaryText,
             profileGainTableMap = preparedProfileGainTableMap,
             gpuDemosaicedRawSource = captureProfile?.gpuDemosaicedRawSource,

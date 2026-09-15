@@ -207,6 +207,67 @@ void TestMgcRolloffOracles() {
     check({1, 4, 16}, {1.5f, 1.0f}, {1, 6, 24});
 }
 
+void TestInputExposureRerendersNonlinearCandidates() {
+    auto solver = CreateSolver();
+    assert(solver && solver->ConfigureHdrNetPriority());
+    constexpr float expected_ev = -1.7f;
+    const float reference = ReferenceLuma();
+    const float source = reference / (1.0f - reference) / std::exp2(expected_ev);
+    int candidate_count = 0;
+    while (const auto ev = solver->NextExposureEv()) {
+        // Stand-in for a complete nonlinear HDRNet candidate. Scaling an already
+        // rendered pixel would solve a different exposure and is intentionally excluded.
+        const float exposed = source * std::exp2(*ev);
+        const float rendered = exposed / (1.0f + exposed);
+        const std::vector<float> grid(kGridCellCount, rendered);
+        assert(solver->SubmitCandidate(*ev, grid.data(), kGridColumns, kGridRows));
+        candidate_count++;
+    }
+    assert(candidate_count > 1 && candidate_count <= kMaximumSampleCount);
+    assert(solver->HasResult());
+    const float selected_source = source * std::exp2(solver->BestSample().exposure_ev);
+    assert(ErrorEv(selected_source / (1.0f + selected_source), reference) <=
+           kMatchResidualToleranceEv);
+    assert(solver->BestSample().match.match_rate == 1.0f);
+    assert(!solver->ConfigureHdrNetPriority());
+}
+
+void TestHdrNetPriorityDoesNotChangeClassicScoring() {
+    std::vector<jint> reference(kGridCellCount);
+    std::vector<float> grid(kGridCellCount);
+    for (int cell = 0; cell < kGridCellCount; ++cell) {
+        const bool shadow = cell % kGridColumns < kGridColumns / 2;
+        reference[cell] = GrayPixel(shadow ? 64 : 180);
+        grid[cell] = *DisplayLinearLuma(reference[cell]) * (shadow ? 1.0f : 0.5f);
+    }
+    auto classic = ExposureSolver::Create(reference.data(), nullptr, kGridColumns, kGridRows);
+    auto hdrnet = ExposureSolver::Create(reference.data(), nullptr, kGridColumns, kGridRows);
+    assert(classic && hdrnet);
+    assert(hdrnet->ConfigureHdrNetPriority());
+    assert(hdrnet->ConfigureHdrNetPriority());  // configuration is idempotent
+    assert(classic->NextExposureEv() == 0.0f && hdrnet->NextExposureEv() == 0.0f);
+    assert(classic->SubmitCandidate(0.0f, grid.data(), kGridColumns, kGridRows));
+    assert(hdrnet->SubmitCandidate(0.0f, grid.data(), kGridColumns, kGridRows));
+    assert(std::abs(classic->BestSample().match.match_rate - 0.5f) < 1.0e-6f);
+    assert(hdrnet->BestSample().match.match_rate > 0.5f);
+    assert(hdrnet->BestSample().match.match_rate <= 1.25f / 2.25f + 1.0e-6f);
+}
+
+void TestLegacyReferenceUsesSharedSlmResponse() {
+    const std::vector<float> rgb{0.02f, 0.12f, 0.8f, 1.0f, 0.5f, 0.25f};
+    for (float ev : {-1.5f, 0.0f, 1.5f}) {
+        std::vector<jint> pixels;
+        assert(BuildLegacyHdrNetReference(rgb.data(), 2, ev, &pixels));
+        for (int index = 0; index < 2; ++index) {
+            assert(pixels[index] == EncodeDisplayRgb(
+                post::Apply(RgbAt(rgb, index), post::SplitGain(std::exp2(ev)))));
+        }
+    }
+    std::vector<jint> pixels;
+    assert(!BuildLegacyHdrNetReference(rgb.data(), 2,
+        std::numeric_limits<float>::quiet_NaN(), &pixels));
+}
+
 }  // namespace
 
 int main() {
@@ -220,6 +281,9 @@ int main() {
     TestPerPixelResponseBeforeCellMean({post::Rgb{0.04f, 0.02f, 0.01f}, {0.9f, 0.08f, 0.015f},
                                       {0.1f, 0.7f, 0.2f}, {0.01f, 0.03f, 0.95f}}, 3.0f);
     TestMgcRolloffOracles();
+    TestInputExposureRerendersNonlinearCandidates();
+    TestHdrNetPriorityDoesNotChangeClassicScoring();
+    TestLegacyReferenceUsesSharedSlmResponse();
     std::cout << "raw HDRNet post-exposure solver tests passed\n";
     return 0;
 }

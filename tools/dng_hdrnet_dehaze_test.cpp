@@ -8,6 +8,77 @@
 
 namespace {
 
+// Minimal host JNI array access so this regression exercises the production
+// gain-table generator, including its point count and stored-weight contract.
+struct TestFloatArray : _jfloatArray {
+  std::vector<float> values;
+  explicit TestFloatArray(std::vector<float> data) : values(std::move(data)) {}
+};
+
+std::vector<float> GenerateHighlightTable(int points, float range_scale,
+                                        float input_gain = 1.0f, float post_gain = 1.0f) {
+  JNINativeInterface_ functions{};
+  functions.GetArrayLength = [](JNIEnv*, jarray array) -> jsize {
+    return static_cast<jsize>(static_cast<TestFloatArray*>(array)->values.size());
+  };
+  functions.GetFloatArrayElements = [](JNIEnv*, jfloatArray array, jboolean*) -> jfloat* {
+    return static_cast<TestFloatArray*>(array)->values.data();
+  };
+  functions.ReleaseFloatArrayElements = [](JNIEnv*, jfloatArray, jfloat*, jint) {};
+  functions.ExceptionCheck = [](JNIEnv*) -> jboolean { return JNI_FALSE; };
+  JNIEnv env{&functions};
+  TestFloatArray coefficients({1.0f, 0.0f});
+  TestFloatArray model({0.5f * input_gain, 0.5f * input_gain,
+                       0.5f * input_gain, 2.0f * input_gain});
+  TestFloatArray shifts({0.0f}), slopes({1.0f}), curve({0.0f, 1.0f});
+  TestFloatArray dehaze({0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f});
+  const float weight_scale = range_scale * input_gain;
+  TestFloatArray weights({0.1495f * weight_scale, 0.2935f * weight_scale,
+                         0.057f * weight_scale, 0.125f * weight_scale, 0.375f * weight_scale});
+  TestFloatArray output(std::vector<float>(points, 0.0f));
+  assert(Java_com_hinnka_mycamera_raw_DngHdrNetProfileGainTableNative_nativeGenerateGains(
+      &env, nullptr, &coefficients, &model, 1, 1, 4, 1, 1, 1, 2, 1, 1, points,
+      4.0f, input_gain, 1.0f, 0.03f, 30.0f, 0.0f, 1.0f / 4096.0f, 4096.0f,
+      &shifts, &slopes, &curve, &dehaze, post_gain, &weights, &output));
+  return output.values;
+}
+
+float RenderNeutralThroughTable(float source, float range_scale, const std::vector<float>& table) {
+  const float index = std::clamp(source * range_scale * table.size(), 0.0f,
+                                 static_cast<float>(table.size() - 1));
+  const int lower = static_cast<int>(std::floor(index));
+  const int upper = std::min(lower + 1, static_cast<int>(table.size() - 1));
+  return source * Lerp(table[lower], table[upper], index - lower);
+}
+
+void TestRangeExtensionDoesNotRebrightenCompressedHighlights() {
+  const auto old_table = GenerateHighlightTable(257, 1.0f);
+  const float scale = 257.0f / 413.0f;
+  const auto expanded = GenerateHighlightTable(413, scale);
+  for (int point = 0; point < 257; ++point) {
+    assert(std::abs(old_table[point] - expanded[point]) < 2.0e-5f);
+  }
+  // The old table hits its terminal gain: a source of 1.6 becomes a bright
+  // island, despite the final post-exposure target remaining at white.
+  assert(RenderNeutralThroughTable(1.6f, 1.0f, old_table) > 1.6f);
+  for (float value : {0.5f, 0.8f, 1.0f, 1.2f, 1.6f}) {
+    // Linear interpolation of reciprocal gains has at most ~1.6e-5 error here.
+    assert(std::abs(RenderNeutralThroughTable(value, scale, expanded) - 1.0f) < 2.0e-5f);
+  }
+}
+
+void TestInputExposureIsBakedOnceBeforeHighlightCompression() {
+  const auto legacy = GenerateHighlightTable(257, 1.0f, 1.0f, 0.25f);
+  const auto input_exposed = GenerateHighlightTable(257, 1.0f, 0.25f, 1.0f);
+  // The old post-EV turns both clipped highlights into the same gray plateau.
+  for (float source : {0.5f, 0.8f}) {
+    assert(std::abs(RenderNeutralThroughTable(source, 1.0f, legacy) - 0.25f) < 1.0e-5f);
+    // New exposure participates in the nonlinear response. The stored N weights
+    // and denominator encode it once, while the renderer still receives original RAW.
+    assert(std::abs(RenderNeutralThroughTable(source, 0.25f, input_exposed) - source) < 1.0e-5f);
+  }
+}
+
 void TestDisabledCurveIsIdentity() {
   std::vector<uint32_t> haze(kDehazeHistogramSize, 0);
   std::vector<uint32_t> highlight(kHighlightHistogramSize, 0);
@@ -115,9 +186,26 @@ void TestColoredPgtmCoordinateAndRolloffAgreeWithEvaluation() {
   assert(neutral.red == 0.2f && neutral.green == 0.2f && neutral.blue == 0.2f);
 }
 
+void TestRangeScalingPreservesDarkCellChromaticity() {
+  const float weights[] = {0.1495f, 0.2935f, 0.057f, 0.125f, 0.375f};
+  const RgbSample cell{3.0e-6f, 1.0e-6f, 0.5e-6f};
+  const float coordinate = TableIntensity(cell, weights);
+  const auto original = RgbForTableCoordinate(0.4f, cell, coordinate, 1.0f);
+  for (float scale : {0.63f, 0.1f}) {
+    const auto expanded = RgbForTableCoordinate(0.4f * scale, cell, coordinate * scale, scale);
+    assert(std::abs(expanded.red - original.red) < 1.0e-6f);
+    assert(std::abs(expanded.green - original.green) < 1.0e-6f);
+    assert(std::abs(expanded.blue - original.blue) < 1.0e-6f);
+    assert(expanded.red > expanded.green * 2.9f);
+  }
+}
+
 }  // namespace
 
 int main() {
+  TestInputExposureIsBakedOnceBeforeHighlightCompression();
+  TestRangeExtensionDoesNotRebrightenCompressedHighlights();
+  TestRangeScalingPreservesDarkCellChromaticity();
   TestDisabledCurveIsIdentity();
   TestHdrNetOutputFeedsWholeImageDehaze();
   TestColoredPgtmCoordinateAndRolloffAgreeWithEvaluation();

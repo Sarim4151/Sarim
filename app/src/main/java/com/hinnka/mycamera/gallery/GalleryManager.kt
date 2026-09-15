@@ -49,6 +49,7 @@ import com.hinnka.mycamera.processor.RawStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrame
 import com.hinnka.mycamera.processor.YuvHdrStackFrameRole
 import com.hinnka.mycamera.raw.DngEmbeddedProfile
+import com.hinnka.mycamera.raw.DngCameraRawProfileXmp
 import com.hinnka.mycamera.raw.DngProfileGainTableMap
 import com.hinnka.mycamera.raw.GpuDemosaicedRawSource
 import com.hinnka.mycamera.raw.MgcSpatialGpuDenoiseMode
@@ -2298,6 +2299,7 @@ object GalleryManager {
                     preparedProfile.hdrRatio,
                     preparedProfile.finalShortGain,
                     preparedProfile.hdrNetPostExposureEv,
+                    preparedProfile.hdrNetInputExposureEv,
                 ),
             )
 
@@ -2441,6 +2443,7 @@ object GalleryManager {
                     photonHdrRatio = preparedProfile.hdrRatio,
                     photonSourceToShortGain = preparedProfile.finalShortGain,
                     photonHdrNetPostExposureEv = preparedProfile.hdrNetPostExposureEv,
+                    photonHdrNetInputExposureEv = preparedProfile.hdrNetInputExposureEv,
                     rawData = rawBuffer.duplicate(),
                     width = rawWidth,
                     height = rawHeight,
@@ -3643,6 +3646,7 @@ object GalleryManager {
                         dngProfilePreparation.hdrRatio,
                         dngProfilePreparation.finalShortGain,
                         dngProfilePreparation.hdrNetPostExposureEv,
+                        dngProfilePreparation.hdrNetInputExposureEv,
                     ),
                 )
                 val profileElapsedMs = System.currentTimeMillis() - profileStartMs
@@ -3776,6 +3780,7 @@ object GalleryManager {
                         photonHdrRatio = dngProfilePreparation.hdrRatio,
                         photonSourceToShortGain = dngProfilePreparation.finalShortGain,
                         photonHdrNetPostExposureEv = dngProfilePreparation.hdrNetPostExposureEv,
+                        photonHdrNetInputExposureEv = dngProfilePreparation.hdrNetInputExposureEv,
                         rawData = null,
                         width = finalStackResult.width,
                         height = finalStackResult.height,
@@ -5333,32 +5338,48 @@ object GalleryManager {
             ?.rawToneMappingParameters
             ?.normalized()
             ?: rawToneMappingParameters.normalized()
-        val embeddedProfile = if (isDng) {
+        val embeddedProfiles = if (isDng) {
             DngEmbeddedProfile.readAllFrom(dngFile)
-                .asSequence()
-                .filterNot { it.isPhotonHdr }
-                .filter { it.profile?.toneCurve?.isValid == true }
-                .sortedBy { it.id != DngEmbeddedProfile.PRIMARY_PROFILE_ID }
-                .firstOrNull()
         } else {
-            null
+            emptyList()
         }
-        // Capture defaults must not opt imported sensor data into HDRNet. The per-photo editor
-        // is the only place that enables it, regardless of the source RAW container format.
-        val importedToneMappingParameters = globalToneMappingParameters.withPhotonHdr(false).let {
-            if (embeddedProfile != null) {
-                it.withProfileToneMapMode(RawProfileToneMapMode.Profile)
-            } else {
-                it
+        val embeddedPhotonProfile = embeddedProfiles
+            .firstOrNull { it.isPhotonHdr && it.hasProfileGainTableMap }
+        val importedHdrProperties = if (embeddedPhotonProfile != null) {
+            val summary = runCatching {
+                DngCameraRawProfileXmp.readSceneExposureSummary(
+                    ExifInterface(dngFile).getAttribute(ExifInterface.TAG_XMP),
+                )
+            }.getOrNull()
+            RawPhotonHdrMetadata.restoreFromSummary(customProperties, summary)
+        } else {
+            customProperties
+        }
+        val embeddedProfile = embeddedProfiles.asSequence()
+            .filterNot { it.isPhotonHdr }
+            .filter { it.profile?.toneCurve?.isValid == true }
+            .sortedBy { it.id != DngEmbeddedProfile.PRIMARY_PROFILE_ID }
+            .firstOrNull()
+        // A valid embedded Photon map carries the capture's rendering intent. Restore it on
+        // import, but do not opt other RAWs into HDRNet based on the global capture defaults.
+        val importedToneMappingParameters = globalToneMappingParameters
+            .withPhotonHdr(embeddedPhotonProfile != null)
+            .let {
+                if (embeddedProfile != null) {
+                    it.withProfileToneMapMode(RawProfileToneMapMode.Profile)
+                } else {
+                    it
+                }
             }
-        }
         PLog.d(
             TAG,
             "Applying RAW tone defaults to imported RAW: " +
                 "profile=${importedToneMappingParameters.profileToneMapMode} " +
                 "embeddedProfile=${embeddedProfile?.profileName ?: "none"} " +
+                "embeddedPhotonPgtm=${embeddedPhotonProfile?.id ?: "none"} " +
                 "photonHdr=${importedToneMappingParameters.usePhotonHdr} " +
                 "dng=$isDng activation=${when {
+                    embeddedPhotonProfile != null -> "embedded-photon-pgtm"
                     embeddedProfile != null -> "embedded-profile"
                     else -> "manual-only"
                 }}"
@@ -5367,6 +5388,7 @@ object GalleryManager {
             rawEmbeddedDngProfileId = embeddedProfile?.id,
             rawAutoExposure = false,
             rawToneMappingParameters = importedToneMappingParameters,
+            customProperties = importedHdrProperties,
         )
     }
 
@@ -5562,7 +5584,7 @@ object GalleryManager {
                         } else {
                             // 降级：如果 RAW 处理失败，尝试直接解码（某些 DNG 包含内置预览图）
                             // 传递元数据确保旋转信息被正确处理
-                            tempImportJpeg(uri, context, metadata, photoFile, thumbnailFile)
+                            tempImportJpeg(uri, context, updatedMetadata, photoFile, thumbnailFile)
                         }
                     }
                     if (!deferRawPreview && photoFile.exists()) {
@@ -5707,6 +5729,9 @@ object GalleryManager {
                         rawMetadata.customProperties,
                     ),
                     photonHdrNetPostExposureEv = RawPhotonHdrMetadata.readPostExposureEv(
+                        rawMetadata.customProperties,
+                    ),
+                    photonHdrNetInputExposureEv = RawPhotonHdrMetadata.readInputExposureEv(
                         rawMetadata.customProperties,
                     ),
                     rawCfaCorrectionMode = updatedMetadata?.rawCfaCorrectionMode,

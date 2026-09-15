@@ -281,7 +281,6 @@ fun GalleryEditScreen(
     val editRawBaselineRecipeParams by viewModel.editRawBaselineRecipeParams.collectAsState()
     val editRawColorEngine by viewModel.editRawRenderingEngine.collectAsState()
     val editRawToneMappingParameters by viewModel.editRawToneMappingParameters.collectAsState()
-    val forceRegeneratePhotonPgtmOnRefresh = editRawToneMappingParameters.usePhotonHdr
     val editRawSpectralFilmStock by viewModel.editRawSpectralFilmStock.collectAsState()
     val editRawSpectralFilmPrint by viewModel.editRawSpectralFilmPrint.collectAsState()
     val editRawSpectralFilmCDensityGain by viewModel.editRawSpectralFilmCDensityGain.collectAsState()
@@ -497,7 +496,6 @@ fun GalleryEditScreen(
                 viewModel.saveRawDcpSelection(photo, it.id) {
                     viewModel.refreshRawPreview(
                         photo = photo,
-                        forceRegeneratePhotonPgtm = forceRegeneratePhotonPgtmOnRefresh,
                     )
                 }
             }
@@ -645,11 +643,13 @@ fun GalleryEditScreen(
     )
 
     var pendingRawPreviewRefresh by remember(currentEditSourcePhoto.id) { mutableStateOf(false) }
+    var pendingPhotonPgtmRegeneration by remember(currentEditSourcePhoto.id) { mutableStateOf(false) }
+    var pendingRawRefreshToast by remember(currentEditSourcePhoto.id) { mutableStateOf(false) }
     val isRefreshingRawPreview = viewModel.refreshingPhotos.contains(currentEditSourcePhoto.id)
 
     fun refreshRawPreview(
         showResultToast: Boolean = false,
-        forceRegeneratePhotonPgtm: Boolean = forceRegeneratePhotonPgtmOnRefresh,
+        forceRegeneratePhotonPgtm: Boolean = false,
     ) {
         viewModel.refreshRawPreview(
             photo = currentEditSourcePhoto,
@@ -667,10 +667,12 @@ fun GalleryEditScreen(
 
     fun requestRawPreviewRefresh(
         showResultToast: Boolean = false,
-        forceRegeneratePhotonPgtm: Boolean = forceRegeneratePhotonPgtmOnRefresh,
+        forceRegeneratePhotonPgtm: Boolean = false,
     ) {
         if (!isRaw) return
         if (viewModel.refreshingPhotos.contains(currentEditSourcePhoto.id)) {
+            pendingPhotonPgtmRegeneration = pendingPhotonPgtmRegeneration || forceRegeneratePhotonPgtm
+            pendingRawRefreshToast = pendingRawRefreshToast || showResultToast
             pendingRawPreviewRefresh = true
             return
         }
@@ -682,8 +684,15 @@ fun GalleryEditScreen(
 
     LaunchedEffect(isRefreshingRawPreview, pendingRawPreviewRefresh, currentEditSourcePhoto.id) {
         if (!isRefreshingRawPreview && pendingRawPreviewRefresh) {
+            val forceRegeneratePhotonPgtm = pendingPhotonPgtmRegeneration
+            val showResultToast = pendingRawRefreshToast
             pendingRawPreviewRefresh = false
-            refreshRawPreview()
+            pendingPhotonPgtmRegeneration = false
+            pendingRawRefreshToast = false
+            refreshRawPreview(
+                showResultToast = showResultToast,
+                forceRegeneratePhotonPgtm = forceRegeneratePhotonPgtm,
+            )
         }
     }
 
@@ -1133,7 +1142,12 @@ fun GalleryEditScreen(
 
                                 IconButton(
                                     onClick = {
-                                        requestRawPreviewRefresh(showResultToast = true)
+                                        // Explicit refresh recomputes Photon PGTM; changing an
+                                        // edit setting or enabling HDR reuses the embedded map.
+                                        requestRawPreviewRefresh(
+                                            showResultToast = true,
+                                            forceRegeneratePhotonPgtm = editRawToneMappingParameters.usePhotonHdr,
+                                        )
                                     },
                                     enabled = !isRefreshingRawPreview
                                 ) {
@@ -1793,10 +1807,7 @@ fun GalleryEditScreen(
                                                 currentEditSourcePhoto
                                             ) { success ->
                                                 if (success) {
-                                                    requestRawPreviewRefresh(
-                                                        forceRegeneratePhotonPgtm =
-                                                            mode.usesPhotonHdr,
-                                                    )
+                                                    requestRawPreviewRefresh()
                                                 }
                                             }
                                         },

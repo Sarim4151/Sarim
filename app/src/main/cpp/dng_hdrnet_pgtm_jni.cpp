@@ -466,7 +466,7 @@ RgbSample RgbForTableCoordinate(float coordinate, const RgbSample& cell_rgb,
                                 float cell_coordinate, float weight_sum) {
   // A positive scalar table cannot reproduce a positive target from non-positive
   // source luma. Define black/signed-noise cells on the neutral axis instead.
-  if (cell_coordinate <= kHdrNetGainEpsilon || HdrNetLuma(cell_rgb) <= kHdrNetGainEpsilon) {
+  if (cell_coordinate <= kHdrNetGainEpsilon * weight_sum || HdrNetLuma(cell_rgb) <= kHdrNetGainEpsilon) {
     const float gray = coordinate / weight_sum;
     return {gray, gray, gray};
   }

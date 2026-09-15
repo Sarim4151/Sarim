@@ -62,8 +62,10 @@ V-Log 选择保留平坦的代码值显示；这里的 sRGB 解码/编码是宿�
 
 ## 导入 RAW 的 HDRNet 与日志
 
-所有新导入 RAW（包括 RW2、DNG 及其他 LibRaw 格式）的 HDRNet PGTM 默认关闭，不继承拍摄全局的开启状态。
-RAW 编辑面板的“动态范围优化”开关显式开启后才生成或复用 Photon PGTM，关闭后不再使用它；开关按照片持久化。
+导入 DNG 含名为 `Photon HDR` 且有效的 PGTM 时，自动开启“动态范围优化”并复用拍摄时的映射。
+其他新导入 RAW（包括 RW2、DNG 及其他 LibRaw 格式）的 HDRNet PGTM 默认关闭，不继承拍摄全局的开启状态。
+RAW 编辑面板的“动态范围优化”开关按照片持久化：开启时优先复用有效的 Photon PGTM，缺失时生成，关闭后不再使用它。
+普通编辑引起的预览刷新遵守相同复用策略；用户点击工具栏刷新按钮时，若动态范围优化开启，则显式重新生成 PGTM。
 用户选择的非 Photon 原生 DNG profile 所含 PGTM 仍遵守其 profile 选择策略，不冒充 HDRNet。
 
 - `RAW_CAMERA_WORKING_SPACE`：打印共享空间、实际前置矩阵和返回 Camera RGB 的矩阵，以及旁路状态。

@@ -112,10 +112,12 @@ data class RawDngCaptureProfileResult(
     val exposureOffsetEv: Float?,
     /** Photon HDR long/short TET ratio; always null for classic auto exposure. */
     val hdrRatio: Float?,
-    /** Fixed source/short gain used by Photon HDR inference. */
+    /** Physical source/short gain before the independent HDRNet input exposure. */
     val finalShortGain: Float?,
-    /** Viewfinder-match exposure applied after HDRNet + Dehaze/DHA; null for non-HDRNet paths. */
+    /** Legacy downstream exposure, retained only to reconstruct older rendering targets. */
     val hdrNetPostExposureEv: Float? = null,
+    /** Exposure applied before HDRNet inference, independently of the physical short gain. */
+    val hdrNetInputExposureEv: Float? = null,
     /** Capture-time MGC AE inputs and results serialized as photon:SummaryText in the DNG XMP. */
     val rawSceneExposureSummaryText: String? = null,
     val profileGainTableMap: DngProfileGainTableMap?,
@@ -138,84 +140,12 @@ data class RawDngProfilePreparation(
     val hdrRatio: Float?,
     val finalShortGain: Float?,
     val hdrNetPostExposureEv: Float? = null,
+    /** Exposure applied before HDRNet inference, independently of the physical short gain. */
+    val hdrNetInputExposureEv: Float? = null,
     val rawSceneExposureSummaryText: String? = null,
     val profileGainTableMap: DngProfileGainTableMap?,
     val gpuDemosaicedRawSource: GpuDemosaicedRawSource? = null,
 )
-
-/** Process-local capture result persisted with Photon gallery metadata for PGTM regeneration. */
-internal object RawPhotonHdrMetadata {
-    private const val PROPERTY = "photonHdrNetRatio"
-    private const val CONTRACT_PROPERTY = "photonHdrNetRatioContract"
-    private const val CURRENT_CONTRACT = "mgc_fast_moments_v25_portrait_mask_v1"
-    private const val SHORT_GAIN_PROPERTY = "photonHdrNetSourceToShortGain"
-    private const val SHORT_GAIN_CONTRACT_PROPERTY = "photonHdrNetSourceToShortGainContract"
-    private const val CURRENT_SHORT_GAIN_CONTRACT = "mgc_fast_moments_v25_final_short_v1"
-    private const val POST_EXPOSURE_PROPERTY = "photonHdrNetPostExposureEv"
-    private const val POST_EXPOSURE_CONTRACT_PROPERTY =
-        "photonHdrNetPostExposureEvContract"
-    private const val CURRENT_POST_EXPOSURE_CONTRACT =
-        "hdrnet_post_dehaze_viewfinder_rolloff_v2"
-
-    fun read(properties: Map<String, String>): Float? = properties[PROPERTY]
-        ?.toFloatOrNull()
-        ?.takeIf { it.isFinite() && it >= 1f }
-
-    fun readFinalShortGain(properties: Map<String, String>): Float? {
-        if (properties[SHORT_GAIN_CONTRACT_PROPERTY] != CURRENT_SHORT_GAIN_CONTRACT) return null
-        return properties[SHORT_GAIN_PROPERTY]
-            ?.toFloatOrNull()
-            ?.takeIf { it.isFinite() && it > 0f }
-    }
-
-    fun readPostExposureEv(properties: Map<String, String>): Float? {
-        if (properties[POST_EXPOSURE_CONTRACT_PROPERTY] !=
-            CURRENT_POST_EXPOSURE_CONTRACT
-        ) return null
-        return properties[POST_EXPOSURE_PROPERTY]
-            ?.toFloatOrNull()
-            ?.takeIf {
-                it.isFinite() && it in
-                    MeteringSystem.RAW_EXPOSURE_MIN_EV..MeteringSystem.RAW_EXPOSURE_MAX_EV
-            }
-    }
-
-    fun write(
-        properties: Map<String, String>,
-        hdrRatio: Float?,
-        finalShortGain: Float? = null,
-        postExposureEv: Float? = null,
-    ): Map<String, String> {
-        val validRatio = hdrRatio?.takeIf { it.isFinite() && it >= 1f } ?: return properties
-        var result = properties + mapOf(
-            PROPERTY to validRatio.toString(),
-            CONTRACT_PROPERTY to CURRENT_CONTRACT,
-        )
-        val validShortGain = finalShortGain?.takeIf { it.isFinite() && it > 0f }
-        if (validShortGain != null) {
-            result += mapOf(
-                SHORT_GAIN_PROPERTY to validShortGain.toString(),
-                SHORT_GAIN_CONTRACT_PROPERTY to CURRENT_SHORT_GAIN_CONTRACT,
-            )
-        }
-        val validPostExposureEv = postExposureEv?.takeIf {
-            it.isFinite() && it in
-                MeteringSystem.RAW_EXPOSURE_MIN_EV..MeteringSystem.RAW_EXPOSURE_MAX_EV
-        }
-        if (validPostExposureEv != null) {
-            result += mapOf(
-                POST_EXPOSURE_PROPERTY to validPostExposureEv.toString(),
-                POST_EXPOSURE_CONTRACT_PROPERTY to CURRENT_POST_EXPOSURE_CONTRACT,
-            )
-        }
-        return result
-    }
-
-    fun isCurrentCaptureContract(properties: Map<String, String>): Boolean {
-        return properties[CONTRACT_PROPERTY] == CURRENT_CONTRACT
-    }
-}
-
 
 /** Capture-request AE compensation persisted independently from presentation ExposureBias. */
 internal object RawCaptureExposureCompensationMetadata {
