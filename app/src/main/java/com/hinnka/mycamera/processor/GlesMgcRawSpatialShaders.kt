@@ -477,9 +477,11 @@ internal object GlesMgcRawSpatialShaders {
             float unblocker = texture(uUnblocker, uv * uUnblockerScale).r;
             if (flow.z < uUnblockerReductionThreshold) unblocker = 0.0;
             bool motionPrior = flow.z > uExtraMotionRobustnessMotionThreshold;
-            vec4 reference = texture(uBaseGuide, uv);
-            bool greenOnly = reference.w < 0.0;
-            reference.w = abs(reference.w) / 1024.0;
+            // MGC Spatial enables FILTER_BASE_GUIDE: both frames need the same
+            // biquadratic lookup. Read the green-only flag before filtering; the
+            // helper takes abs per lookup and already divides stored variance by 1024.
+            bool greenOnly = texture(uBaseGuide, uv).w < 0.0;
+            vec4 reference = sampleBiquadraticAbsolute(uBaseGuide, uv);
             vec4 current = sampleBiquadraticAbsolute(uAltGuide, warpedUv);
             float luma = greenOnly
                 ? reference.y
