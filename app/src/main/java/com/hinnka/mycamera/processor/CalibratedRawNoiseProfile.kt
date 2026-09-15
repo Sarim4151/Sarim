@@ -9,7 +9,7 @@ import kotlin.math.sqrt
 /**
  * Standard GCam sensor noise calibration.
  *
- * The four planes and coefficient arrays are canonical R, Gr, Gb, B. Evaluation follows the
+ * External `.c` and native gain tables use canonical R, Gr, Gb, B. Evaluation follows the
  * generated GCam `.c` files exactly:
  *
  * S = A * sensitivity + B
@@ -72,6 +72,7 @@ data class CalibratedRawNoiseProfile(
         }
     }
 
+    /** Evaluate the selected calibration using capture ISO and the required camera gain limits. */
     fun evaluate(
         sensitivity: Int,
         minimumSensitivityIso: Int = 0,

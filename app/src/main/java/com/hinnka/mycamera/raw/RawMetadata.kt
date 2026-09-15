@@ -10,7 +10,6 @@ import android.util.Log
 import android.util.Rational
 import com.hinnka.mycamera.camera.readMetadataOrNull
 import com.hinnka.mycamera.camera.readMetadataOrThrow
-import com.hinnka.mycamera.processor.PhotonCoreImagingTuning
 import com.hinnka.mycamera.processor.RawNoiseModel
 import com.hinnka.mycamera.processor.RawNoiseProfileSelection
 import com.hinnka.mycamera.utils.DeviceUtil
@@ -173,6 +172,8 @@ data class RawMetadata(
     val maxAnalogSensitivity: Int = 0,
     val shutterSpeed: Long = 0L,
     val aperture: Float = FALLBACK_APERTURE_F_NUMBER,
+    /** Capture-scoped sensor area when RAWmax quality tuning is enabled; null uses defaults. */
+    val rawMaxQualityTuningSensorAreaMm2: Float? = null,
     /** CameraCharacteristics sensor geometry used only for adaptive noise-model estimation. */
     val sensorPhysicalWidthMm: Float = 0f,
     val sensorPhysicalHeightMm: Float = 0f,
@@ -194,8 +195,6 @@ data class RawMetadata(
     val mgcDenoiseTuningSnr: Float? = null,
     /** MGC-derived attenuation applied to Photon's final GLES sharpen strength. */
     val mgcSharpenAttenuationScale: Float? = null,
-    /** Capture-scoped Photon controls for fusion, denoise and dehaze. */
-    val coreImagingTuning: PhotonCoreImagingTuning = PhotonCoreImagingTuning.DEFAULT,
     val rotation: Int? = null,
     val profileGainTableMap: DngProfileGainTableMap? = null,
     /** Whether the exact CaptureResult paired with this RAW reported at least one face. */
@@ -227,7 +226,7 @@ data class RawMetadata(
         }
         return if (model != null) {
             copy(
-                channelNoiseProfile = model.canonicalChannelPairs(),
+                channelNoiseProfile = model.canonicalChannelPairs(cfaPattern),
                 noiseProfileLayout = RawNoiseProfileLayout.CANONICAL_BAYER,
             )
         } else {
@@ -1219,7 +1218,7 @@ data class RawMetadata(
         if (mgcSpatialStrengthMap != other.mgcSpatialStrengthMap) return false
         if (mgcDenoiseTuningSnr != other.mgcDenoiseTuningSnr) return false
         if (mgcSharpenAttenuationScale != other.mgcSharpenAttenuationScale) return false
-        if (coreImagingTuning != other.coreImagingTuning) return false
+        if (rawMaxQualityTuningSensorAreaMm2 != other.rawMaxQualityTuningSensorAreaMm2) return false
         if (rotation != other.rotation) return false
 
         return true
@@ -1257,7 +1256,7 @@ data class RawMetadata(
         result = 31 * result + (mgcSpatialStrengthMap?.hashCode() ?: 0)
         result = 31 * result + (mgcDenoiseTuningSnr?.hashCode() ?: 0)
         result = 31 * result + (mgcSharpenAttenuationScale?.hashCode() ?: 0)
-        result = 31 * result + coreImagingTuning.hashCode()
+        result = 31 * result + (rawMaxQualityTuningSensorAreaMm2?.hashCode() ?: 0)
         result = 31 * result + (rotation ?: 0)
         return result
     }

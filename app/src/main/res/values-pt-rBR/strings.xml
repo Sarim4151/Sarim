@@ -312,4 +312,6 @@
     <string name="settings_color_palette">Paleta de cores</string>
     <string name="settings_color_palette_description">Mostrar a paleta no editor para ajustar o equilíbrio tonal e a saturação ao mesmo tempo.</string>
     <string name="recipe_palette_tone">Equilíbrio tonal</string>
+    <string name="settings_raw_max_quality_tuning">Ajuste de qualidade HDR+</string>
+    <string name="settings_raw_max_quality_tuning_description">Ajusta a estimativa de ruído da fusão e a redução de ruído ao tamanho físico do sensor. Quando desativado, usa os parâmetros de imagem padrão.</string>
 </resources>

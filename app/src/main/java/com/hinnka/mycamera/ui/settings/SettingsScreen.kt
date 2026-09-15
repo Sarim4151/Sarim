@@ -404,6 +404,7 @@ fun SettingsScreen(
     val rawColorEngine by viewModel.rawRenderingEngine.collectAsState()
     val rawToneMappingParameters by viewModel.rawToneMappingParameters.collectAsState()
     val rawMaxSharpening by viewModel.rawMaxSharpening.collectAsState()
+    val rawMaxQualityTuningEnabled by viewModel.rawMaxQualityTuningEnabled.collectAsState()
     val rawMaxNoiseReduction by viewModel.rawMaxNoiseReduction.collectAsState()
     val rawMaxChromaNoiseReduction by viewModel.rawMaxChromaNoiseReduction.collectAsState()
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
@@ -2075,6 +2076,17 @@ fun SettingsScreen(
                     SettingsSection(
                         title = stringResource(R.string.settings_professional_group_image_quality)
                     ) {
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_raw_max_quality_tuning),
+                            description = stringResource(R.string.settings_raw_max_quality_tuning_description),
+                            checked = rawMaxQualityTuningEnabled,
+                            onCheckedChange = viewModel::setRawMaxQualityTuningEnabled,
+                        )
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
                         val valueFormat = stringResource(R.string.settings_raw_max_output_scale_value)
                         SliderSettingItem(
                             title = stringResource(R.string.settings_raw_max_output_scale),

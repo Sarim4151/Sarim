@@ -311,4 +311,6 @@
     <string name="settings_color_palette">Palet warna</string>
     <string name="settings_color_palette_description">Tampilkan palet warna di editor untuk menyesuaikan tonalitas dan saturasi secara bersamaan.</string>
     <string name="recipe_palette_tone">Tonalitas</string>
+    <string name="settings_raw_max_quality_tuning">Penyetelan kualitas gambar HDR+</string>
+    <string name="settings_raw_max_quality_tuning_description">Sesuaikan estimasi derau penggabungan dan pengurangan derau dengan ukuran fisik sensor. Saat nonaktif, gunakan parameter gambar bawaan.</string>
 </resources>

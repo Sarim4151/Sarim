@@ -1119,4 +1119,6 @@
     <string name="settings_raw_lumix_photo_style_description">LUMIX S9のフォトスタイルを選択します。デフォルトはスタンダードです。</string>
     <string name="settings_color_palette">カラーパレット</string>
     <string name="settings_color_palette_description">編集画面にカラーパレットを表示し、階調と彩度を同時に調整できます。</string>
+    <string name="settings_raw_max_quality_tuning">HDR+ 画質調整</string>
+    <string name="settings_raw_max_quality_tuning_description">センサーの物理サイズに合わせて合成時のノイズ推定とノイズ低減を調整します。オフの場合は標準の画像処理パラメータを使用します。</string>
 </resources>

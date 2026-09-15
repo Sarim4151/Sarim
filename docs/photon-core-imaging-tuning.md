@@ -1,92 +1,90 @@
 # Photon 核心成像参数
 
-`PhotonCoreImagingTuning` 是 Photon 自己的核心 RAW 调校模型。它不模拟外部相机配置，也不把不同处理阶段的数值塞进一个扁平参数表。
+`PhotonCoreImagingTuning` 保持为本地默认值单例，不提供核心参数的持久化读写。
+设置 → 专业设置 → HDR+ 画质中的「HDR+ 画质调优」恢复 1.27.2.2 的传感器面积调优算法，
+默认关闭；开启后仅对 HDR+（RAWmax）拍摄应用。传感器面积缺失或无效时使用默认参数。
 
-当前拍摄与处理固定使用默认核心参数，不提供设置项、DataStore 覆盖或基于传感器面积的自动调优。
-旧版本已经写入 RAW metadata 的 Photon 参数仍可读取，以保持历史照片的重处理兼容性。去雾阶段和
-原版调用证据见 [Photon HDRNet Dehaze + DHA 链路](photon-dehaze-pipeline.md)。
+## 本地默认值
 
-## 领域结构
+| 参数 | 默认值 |
+| --- | --- |
+| Sabre `mergeGradientThreshold` | `-1` |
+| 参考信号缺失时的替代值 | `0.18` |
+| 噪声谱缩放 `noiseCorrelationScale` | `1` |
+| luma/chroma 五层强度倍率 | 全部 `1` |
+| revert/outlier 五层倍率 | 全部 `1` |
+| 频率响应 `(responseOffset-cos²)+(cos+cosineOffset)²` | offset=`1`，cosineOffset=`-1` |
+| Sabre strength/revert/outlier 绝对节点覆盖 | 全部不覆盖，使用原始资产 |
+| 新建噪声谱初值 `noiseSpectrumSeed` | `1`；已有测量谱保持自身幅度 |
 
-| 领域 | 类型 | 决定的处理阶段 |
+移除此前 AGC p0 的固定默认调参：strength `[2.5,2.5,2.5,2.5,1.25]`、revert `2`、outlier `0.75`、
+responseOffset `0.9375`、噪声谱初值 `0.5`，以及 dl/dm/dh 的 strength/revert/outlier 绝对覆盖。
+历史 AGC 参数仅保留在显式测试样本中，用于验证原版插值语义，不参与运行期默认值。
+
+融合阈值 `-1` 对应 AGC `lib_sabre_denoise_control_key=-1.000`，原样进入
+`covariance_parameters1.z`。正常有限非负局部特征下，
+`clamp(1-(feature-threshold)/transition,0,1)` 为零，取消弱纹理区域向宽各向同性核的额外混合。
+画质调优开关的两种状态均保留这一默认值。显式 `null` 可使用原始 SNR 自适应阈值；归一化范围
+为 `-32..32`，允许负阈值通过。既有拍摄日志记录 `mergeGradientThreshold` 与最终 kernel 参数。
+
+## 1.27.2.2 画质调优
+
+`PhotonSensorSizeTuning` 将物理传感器面积限制在 `20.48..128 mm²`，令
+`t=log2(area/32)`，沿用历史拟合系数：
+
+| 字段 | 启用后的值 |
+| --- | --- |
+| Sabre 噪声谱缩放 | `0.767513962 - 0.164396329*t` |
+| 五层亮度 strength 倍率 | `0.252164225 + 0.059759506*t` |
+| 五层亮度 revert 倍率 | `0.3125` |
+| 五层亮度 outlier 倍率 | `0.8125` |
+| 五层色度 strength 倍率 | `0.3125` |
+| 频率响应 responseOffset | `13.499369928 - 4.878369857*t` |
+| SNR20 的第一层亮度 strength 节点 | `0.608876213 + 0.033127858*t` |
+
+Sabre 亮度 strength 在 SNR 插值前使用下列节点：
+
+| SNR | level 1..5 |
+| --- | --- |
+| 5 | `[0.8,2.2,0.5,1.65,0.7]` |
+| 20 | `[拟合值,2.1,0.4,0.8,0.2]` |
+| 40 | `[0.85,0.4,0.3,0.457,0.1]` |
+
+revert/outlier 不覆盖资产节点，只应用上述倍率。用户 RAW luma/chroma 滑杆继续控制外层总强度。
+噪声谱缩放在 Sabre 输出噪声进入 denoise 金字塔之前应用；Spatial 保持自己的测量谱。
+
+参数恢复不回退融合噪声传播、CFA 映射或数值域转换等算法修复。
+默认噪声模型为 Pixel5。以下三个模型通过通用 `.c` 解析器加载，作为可选模型：
+
+| 编号 | 文件 | 模拟增益 ISO 分界 |
 | --- | --- | --- |
-| 多帧融合 | `PhotonFusionTuning` | Sabre frame merge、参考帧 SNR、融合后噪声相关性 |
-| 空域降噪 | `PhotonDenoiseTuning` | 全分辨率 luma/chroma 金字塔、细节重建、离群点抑制 |
-| 除雾 | `PhotonDehazeTuning` | HDRNet 输出的雾幕曲线和 DHA 动态高光调整，并烘焙进 PGTM |
+| 26 | `noise_profiles/GC02M1_LMIPRO.c` | 600 |
+| 48 | `noise_profiles/LGV50_IMX363.c` | 800 |
+| 70 | `noise_profiles/GalaxyM51_SLSI_GC5035_54.c` | 800 |
 
-## 多帧融合
+26 号复用已有条目，系数与用户提供的 `.c` 文件完全一致。70 号的测试循环上限 1600 不代表
+模拟增益分界，实际使用文件函数中的 800。
 
-`PhotonFusionTuning`：
+空域降噪的原版 `Scale(2)` 数值域转换保持原实现。
 
-- `mergeGradientThreshold: Float?`
-  - `null`：使用当前 SNR 和帧数计算的自适应阈值。
-  - 非空：直接成为 merge covariance kernel 的 gradient threshold。
-  - 范围 `0..32`。
-- `missingReferenceSignal`
-  - 只有参考帧中心区域无法获得有效平均绿色信号时才使用。
-  - 直接进入噪声方差和 reference SNR 计算，范围 `0..1`，默认 `0.18`。
-- `noiseCorrelationScale`
-  - 在 demosaic 和 denoise pyramid 传播之前直接缩放 128-bin noise correlation spectrum。
-  - 不修改 read/shot noise coefficient，范围 `0..8`。
+## 拍摄与重处理
 
-## 空域降噪
+- 开关由 `UserPreferencesRepository` 保存；拍摄时取当前镜头的物理传感器面积。
+- 每张照片只保存 `photonCoreTuningModel=photon-sensor-area-v1` 和 `photonSensorPhysicalAreaMm2`
+  两项，用于重建启用时的调优；关闭时不写入这两项。
+- 拍摄默认降噪通过 `RawMetadata.rawMaxQualityTuningSensorAreaMm2` 传入；DNG 重处理和回退路径
+  从该照片的属性恢复面积，重新计算参数，不读取当前全局开关，也不读取旧的逐字段核心参数覆盖。
+- `MgcFullResolutionDenoise` 统一解析面积调优，日志记录面积、五层倍率和频率响应。
+- 原有有效融合模型、噪声谱传播和默认降噪烘焙边界保持不变。
 
-`PhotonDenoiseTuning` 把四种作用完全分开，每种都是固定五层 `PhotonPyramidScales`：
+## 锐化与除雾
 
-- `lumaStrengthScale`：亮度降噪 `strength`。
-- `detailReconstructionScale`：亮度 `revertFactor`；决定降噪结果向原始信号恢复的程度。
-- `outlierRejectionScale`：亮度 `outlierDistance`。
-- `chromaStrengthScale`：色度降噪 `strength`。
+画质调优不改变当前最终 GLES USM 锐化；用户 sharpening 滑杆与融合 attenuation 控制其强度。
+HDRNet Dehaze/DHA 继续使用本地默认值，独立于面积拟合。完整链路见
+[Photon HDRNet Dehaze + DHA 链路](photon-dehaze-pipeline.md)。
 
-五个值依次对应降噪金字塔 level 1..5，范围均为 `0..16`，默认全部为 `1`。用户层的 RAW luma/chroma 总强度仍然作为外层强度控制，不和这些内部曲线合并。
+## 验证
 
-### 频率响应
-
-`PhotonDenoiseFrequencyResponse` 直接控制 noise-buffer builder 使用的响应式：
-
-```text
-(responseOffset - cos²) + (cos + cosineOffset)²
-```
-
-- `responseOffset` 默认 `1`。
-- `cosineOffset` 默认 `-1`。
-- 两者范围 `-32..32`。
-
-它们同时作用于 luma/chroma 金字塔的原始噪声能量计算，不是后置平滑或锐化补偿。
-
-### Sabre 亮度节点
-
-`PhotonSabreLumaTuningNodes` 提供 SNR 5、20、40 三个绝对 tuning 节点，每个节点可以覆盖五层 luma strength。覆盖发生在 SNR 插值之前；未指定的 level 保留内置 tuning asset 数值。
-
-## 锐化
-
-最终锐化不再属于 `PhotonCoreImagingTuning`。RAW 输出保持在 GLES 管线中，以 9-tap 可分离亮度
-模糊构建自适应 USM；用户 sharpening 滑杆决定总强度，MGC 多帧合成产生的 attenuation 只缩放该
-GPU 强度。锐化不读取 SNR，不触发 RAW 像素统计或 GPU→CPU 回读。
-
-## 除雾
-
-`PhotonDehazeTuning` 只由 HDRNet PGTM 生成链消费：
-
-- `enabled`
-- `strength`，范围 `0..4`
-  - 直接缩放直方图估算出的两组 atmospheric haze point。
-  - `0` 关闭雾幕黑位/对比曲线，但不强制关闭独立的动态高光调整。
-- `dynamicHighlightStrength`，范围 `0..1`
-  - `0` 保持白点比例 `1`。
-  - `1` 完整采用高光直方图估算的比例；中间值在线性比例域插值。
-
-处理顺序为：固定 final-short 线性工作 RGB → 一次 HDRNet → Dehaze/DHA → 取景器匹配与 SLM rolloff
-→ PGTM 烘焙 → DCP 色彩映射与 profile tone → 最终锐化。完整 256×192 HDRNet 输出只建立一次
-两组 12-bit 直方图；匹配沿用 8×6 网格权重，可靠暗部最多增加 25% 权重。候选先对每个像素
-执行 rolloff/digital gain，再统计每格亮度；不施加 P99 匹配限制，不修改 short gain 或 HDR
-ratio。最终渲染只应用烘焙后的 PGTM，不存在独立 Dehaze pass，也不会逐 tile
-重新统计曲线。Classic 与 Local Laplacian 路径不消费这些参数。
-
-## 生命周期与持久化
-
-- 新拍摄不写入核心参数覆盖，融合与 RAW 处理使用 `PhotonCoreImagingTuning.DEFAULT`。
-- 不提供 UI、DataStore 偏好或基于物理传感器尺寸的自动模型。
-- 历史 metadata 中已有的 `photonFusion*`、`photonDenoise*` 和 `photonDehaze*` 参数仍可读取，
-  仅用于旧照片重处理复现。
-- 去雾不提供 UI 或独立 DataStore 偏好；没有历史覆盖值时使用默认强度。
+恢复历史 `PhotonSensorSizeTuningTest` 的拟合系数、面积趋势和边界校验，并覆盖开关状态的照片属性传递。
+默认值校验确认单位倍率、无节点覆盖、频率响应与噪声谱初值为 `1`；融合参数校验确认 `-1` 经归一化
+进入 covariance uniform。原 AGC 插值回归使用显式历史样本，不再依赖生产默认参数。

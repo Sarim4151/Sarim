@@ -1,154 +1,20 @@
 package com.hinnka.mycamera.processor
 
-/**
- * Photon-owned controls for the core RAW imaging chain.
- *
- * The model is intentionally organized by processing domain. New captures use [DEFAULT]; decoding
- * custom properties remains available so RAW files created by older versions can be reprocessed
- * with their original parameters. Runtime processors consume these domain fields directly rather
- * than importing a third-party patch vocabulary.
- */
-data class PhotonCoreImagingTuning(
-    val fusion: PhotonFusionTuning = PhotonFusionTuning.DEFAULT,
-    val denoise: PhotonDenoiseTuning = PhotonDenoiseTuning.DEFAULT,
-    /** Controls Dehaze + DHA baked into HDRNet's ProfileGainTableMap output. */
-    val dehaze: PhotonDehazeTuning = PhotonDehazeTuning.DEFAULT,
-) {
-    fun normalized(): PhotonCoreImagingTuning = copy(
-        fusion = fusion.normalized(),
-        denoise = denoise.normalized(),
-        dehaze = dehaze.normalized(),
-    )
-
-    fun toCustomProperties(): Map<String, String> {
-        val tuning = normalized()
-        return buildMap {
-            tuning.fusion.mergeGradientThreshold?.let {
-                put(FUSION_GRADIENT_THRESHOLD_PROPERTY, it.toString())
-            }
-            put(FUSION_FALLBACK_SIGNAL_PROPERTY, tuning.fusion.missingReferenceSignal.toString())
-            put(FUSION_CORRELATION_SCALE_PROPERTY, tuning.fusion.noiseCorrelationScale.toString())
-            put(DENOISE_LUMA_SCALE_PROPERTY, tuning.denoise.lumaStrengthScale.toPersistedString())
-            put(
-                DENOISE_REVERT_SCALE_PROPERTY,
-                tuning.denoise.detailReconstructionScale.toPersistedString(),
-            )
-            put(
-                DENOISE_OUTLIER_SCALE_PROPERTY,
-                tuning.denoise.outlierRejectionScale.toPersistedString(),
-            )
-            put(
-                DENOISE_CHROMA_SCALE_PROPERTY,
-                tuning.denoise.chromaStrengthScale.toPersistedString(),
-            )
-            put(
-                DENOISE_RESPONSE_OFFSET_PROPERTY,
-                tuning.denoise.frequencyResponse.responseOffset.toString(),
-            )
-            put(
-                DENOISE_RESPONSE_COSINE_OFFSET_PROPERTY,
-                tuning.denoise.frequencyResponse.cosineOffset.toString(),
-            )
-            tuning.denoise.sabreLumaNodes.toPersistedString()?.let {
-                put(DENOISE_SABRE_NODES_PROPERTY, it)
-            }
-            put(DEHAZE_ENABLED_PROPERTY, tuning.dehaze.enabled.toString())
-            put(DEHAZE_STRENGTH_PROPERTY, tuning.dehaze.strength.toString())
-            put(
-                DEHAZE_DYNAMIC_HIGHLIGHT_STRENGTH_PROPERTY,
-                tuning.dehaze.dynamicHighlightStrength.toString(),
-            )
-        }
-    }
-
-    fun toPersistedString(): String = toCustomProperties()
-        .entries
-        .sortedBy(Map.Entry<String, String>::key)
-        .joinToString("\n") { (key, value) -> "$key=$value" }
-
-    companion object {
-        const val FUSION_GRADIENT_THRESHOLD_PROPERTY = "photonFusionGradientThreshold"
-        const val FUSION_FALLBACK_SIGNAL_PROPERTY = "photonFusionMissingReferenceSignal"
-        const val FUSION_CORRELATION_SCALE_PROPERTY = "photonFusionNoiseCorrelationScale"
-        const val DENOISE_LUMA_SCALE_PROPERTY = "photonDenoiseLumaStrengthScale"
-        const val DENOISE_REVERT_SCALE_PROPERTY = "photonDenoiseDetailReconstructionScale"
-        const val DENOISE_OUTLIER_SCALE_PROPERTY = "photonDenoiseOutlierRejectionScale"
-        const val DENOISE_CHROMA_SCALE_PROPERTY = "photonDenoiseChromaStrengthScale"
-        const val DENOISE_RESPONSE_OFFSET_PROPERTY = "photonDenoiseResponseOffset"
-        const val DENOISE_RESPONSE_COSINE_OFFSET_PROPERTY = "photonDenoiseResponseCosineOffset"
-        const val DENOISE_SABRE_NODES_PROPERTY = "photonDenoiseSabreLumaNodes"
-        const val DEHAZE_ENABLED_PROPERTY = "photonDehazeEnabled"
-        const val DEHAZE_STRENGTH_PROPERTY = "photonDehazeStrength"
-        const val DEHAZE_DYNAMIC_HIGHLIGHT_STRENGTH_PROPERTY =
-            "photonDehazeDynamicHighlightStrength"
-
-        val DEFAULT = PhotonCoreImagingTuning()
-
-        fun fromPersistedString(value: String?): PhotonCoreImagingTuning {
-            if (value.isNullOrBlank()) return DEFAULT
-            val properties = value.lineSequence().mapNotNull { line ->
-                val separator = line.indexOf('=')
-                if (separator <= 0) null else line.substring(0, separator) to
-                    line.substring(separator + 1)
-            }.toMap()
-            return fromCustomProperties(properties)
-        }
-
-        fun fromCustomProperties(properties: Map<String, String>): PhotonCoreImagingTuning {
-            val hasPhotonProperties = properties.keys.any { it.startsWith("photon") }
-            if (!hasPhotonProperties) return DEFAULT
-            return PhotonCoreImagingTuning(
-                fusion = PhotonFusionTuning(
-                    mergeGradientThreshold = properties[FUSION_GRADIENT_THRESHOLD_PROPERTY]
-                        ?.toFloatOrNull(),
-                    missingReferenceSignal = properties[FUSION_FALLBACK_SIGNAL_PROPERTY]
-                        ?.toFloatOrNull() ?: PhotonFusionTuning.DEFAULT_MISSING_REFERENCE_SIGNAL,
-                    noiseCorrelationScale = properties[FUSION_CORRELATION_SCALE_PROPERTY]
-                        ?.toFloatOrNull() ?: 1f,
-                ),
-                denoise = PhotonDenoiseTuning(
-                    lumaStrengthScale = PhotonPyramidScales.fromPersistedString(
-                        properties[DENOISE_LUMA_SCALE_PROPERTY],
-                    ),
-                    detailReconstructionScale = PhotonPyramidScales.fromPersistedString(
-                        properties[DENOISE_REVERT_SCALE_PROPERTY],
-                    ),
-                    outlierRejectionScale = PhotonPyramidScales.fromPersistedString(
-                        properties[DENOISE_OUTLIER_SCALE_PROPERTY],
-                    ),
-                    chromaStrengthScale = PhotonPyramidScales.fromPersistedString(
-                        properties[DENOISE_CHROMA_SCALE_PROPERTY],
-                    ),
-                    frequencyResponse = PhotonDenoiseFrequencyResponse(
-                        responseOffset = properties[DENOISE_RESPONSE_OFFSET_PROPERTY]
-                            ?.toFloatOrNull() ?: 1f,
-                        cosineOffset = properties[DENOISE_RESPONSE_COSINE_OFFSET_PROPERTY]
-                            ?.toFloatOrNull() ?: -1f,
-                    ),
-                    sabreLumaNodes = PhotonSabreLumaTuningNodes.fromPersistedString(
-                        properties[DENOISE_SABRE_NODES_PROPERTY],
-                    ),
-                ),
-                dehaze = PhotonDehazeTuning(
-                    enabled = properties[DEHAZE_ENABLED_PROPERTY]
-                        ?.toBooleanStrictOrNull() ?: PhotonDehazeTuning.DEFAULT.enabled,
-                    strength = properties[DEHAZE_STRENGTH_PROPERTY]
-                        ?.toFloatOrNull() ?: PhotonDehazeTuning.DEFAULT.strength,
-                    dynamicHighlightStrength =
-                        properties[DEHAZE_DYNAMIC_HIGHLIGHT_STRENGTH_PROPERTY]
-                            ?.toFloatOrNull()
-                            ?: PhotonDehazeTuning.DEFAULT.dynamicHighlightStrength,
-                ),
-            ).normalized()
-        }
-
-    }
+/** Local defaults for Photon's RAW imaging chain, shared by capture and reprocessing. */
+object PhotonCoreImagingTuning {
+    val fusion: PhotonFusionTuning = PhotonFusionTuning.DEFAULT
+    val denoise: PhotonDenoiseTuning = PhotonDenoiseTuning.DEFAULT
+    /** Dehaze + DHA baked into HDRNet's ProfileGainTableMap output. */
+    val dehaze: PhotonDehazeTuning = PhotonDehazeTuning.DEFAULT
 }
 
 /** Controls frame admission and propagated noise behavior in multi-frame fusion. */
 data class PhotonFusionTuning(
-    /** Null keeps the SNR-adaptive merge threshold; a value directly overrides it. */
-    val mergeGradientThreshold: Float? = null,
+    /**
+     * AGC lib_sabre_denoise_control_key: -1 disables weak-texture broadening of the
+     * Sabre fusion kernel. Null restores the original SNR-adaptive threshold.
+     */
+    val mergeGradientThreshold: Float? = -1f,
     /** Normalized green signal used only when reference-frame measurement is unavailable. */
     val missingReferenceSignal: Float = DEFAULT_MISSING_REFERENCE_SIGNAL,
     /**
@@ -161,7 +27,7 @@ data class PhotonFusionTuning(
     fun normalized(): PhotonFusionTuning = copy(
         mergeGradientThreshold = mergeGradientThreshold
             ?.takeIf(Float::isFinite)
-            ?.coerceIn(0f, 32f),
+            ?.coerceIn(-32f, 32f),
         missingReferenceSignal = missingReferenceSignal
             .takeIf(Float::isFinite)
             ?.coerceIn(0f, 1f)
@@ -178,7 +44,7 @@ data class PhotonFusionTuning(
     }
 }
 
-/** Fixed five-level pyramid multiplier with structural equality and stable serialization. */
+/** Fixed five-level pyramid multiplier with structural equality. */
 data class PhotonPyramidScales(
     val level1: Float = 1f,
     val level2: Float = 1f,
@@ -191,8 +57,6 @@ data class PhotonPyramidScales(
     fun normalized(): PhotonPyramidScales = map { value ->
         value.takeIf(Float::isFinite)?.coerceIn(0f, MAX_SCALE) ?: 1f
     }
-
-    fun toPersistedString(): String = toFloatArray().joinToString(",")
 
     private fun map(transform: (Float) -> Float): PhotonPyramidScales = PhotonPyramidScales(
         transform(level1),
@@ -213,18 +77,6 @@ data class PhotonPyramidScales(
             level4 = value,
             level5 = value,
         ).normalized()
-
-        fun fromPersistedString(value: String?): PhotonPyramidScales {
-            val values = value?.split(',')?.map(String::toFloatOrNull) ?: return IDENTITY
-            if (values.size != 5 || values.any { it == null }) return IDENTITY
-            return PhotonPyramidScales(
-                values[0]!!,
-                values[1]!!,
-                values[2]!!,
-                values[3]!!,
-                values[4]!!,
-            ).normalized()
-        }
     }
 }
 
@@ -238,6 +90,11 @@ data class PhotonDenoiseTuning(
     val frequencyResponse: PhotonDenoiseFrequencyResponse = PhotonDenoiseFrequencyResponse.DEFAULT,
     /** Optional absolute Sabre luma strength nodes at SNR 5/20/40, before interpolation. */
     val sabreLumaNodes: PhotonSabreLumaTuningNodes = PhotonSabreLumaTuningNodes.DEFAULT,
+    /** Independent absolute protobuf fields, also overridden before SNR interpolation. */
+    val sabreLumaRevertNodes: PhotonSabreLumaTuningNodes = PhotonSabreLumaTuningNodes.DEFAULT,
+    val sabreLumaOutlierNodes: PhotonSabreLumaTuningNodes = PhotonSabreLumaTuningNodes.DEFAULT,
+    /** Initial value of a default 128-bin spectrum; never a multiplier for measured spectra. */
+    val noiseSpectrumSeed: Float = DEFAULT_SPECTRUM_SEED,
 ) {
     fun normalized(): PhotonDenoiseTuning = copy(
         lumaStrengthScale = lumaStrengthScale.normalized(),
@@ -246,29 +103,36 @@ data class PhotonDenoiseTuning(
         chromaStrengthScale = chromaStrengthScale.normalized(),
         frequencyResponse = frequencyResponse.normalized(),
         sabreLumaNodes = sabreLumaNodes.normalized(),
+        sabreLumaRevertNodes = sabreLumaRevertNodes.normalized(allowNegative = true),
+        sabreLumaOutlierNodes = sabreLumaOutlierNodes.normalized(allowNegative = true),
+        noiseSpectrumSeed = noiseSpectrumSeed.takeIf(Float::isFinite)
+            ?.coerceIn(0f, 8f) ?: DEFAULT_SPECTRUM_SEED,
     )
 
     companion object {
+        const val DEFAULT_SPECTRUM_SEED = 1f
         val DEFAULT = PhotonDenoiseTuning()
     }
 }
 
 /** Constants in the denoise pyramid response `(responseOffset-cos²)+(cos+cosineOffset)²`. */
 data class PhotonDenoiseFrequencyResponse(
-    val responseOffset: Float = 1f,
+    val responseOffset: Float = DEFAULT_RESPONSE_OFFSET,
     val cosineOffset: Float = -1f,
 ) {
     fun normalized(): PhotonDenoiseFrequencyResponse = copy(
-        responseOffset = responseOffset.takeIf(Float::isFinite)?.coerceIn(-32f, 32f) ?: 1f,
+        responseOffset = responseOffset.takeIf(Float::isFinite)?.coerceIn(-32f, 32f)
+            ?: DEFAULT_RESPONSE_OFFSET,
         cosineOffset = cosineOffset.takeIf(Float::isFinite)?.coerceIn(-32f, 32f) ?: -1f,
     )
 
     companion object {
+        const val DEFAULT_RESPONSE_OFFSET = 1f
         val DEFAULT = PhotonDenoiseFrequencyResponse()
     }
 }
 
-/** Optional absolute strength overrides for one five-level Sabre tuning node. */
+/** Absolute field overrides. Null preserves the asset; signed revert/outlier values are literal. */
 data class PhotonPyramidOverrides(
     val level1: Float? = null,
     val level2: Float? = null,
@@ -278,42 +142,24 @@ data class PhotonPyramidOverrides(
 ) {
     fun toList(): List<Float?> = listOf(level1, level2, level3, level4, level5)
 
-    fun normalized(): PhotonPyramidOverrides {
+    fun normalized(allowNegative: Boolean = false): PhotonPyramidOverrides {
         val values = toList().map { value ->
-            value?.takeIf(Float::isFinite)?.coerceIn(0f, 32f)
+            value?.takeIf(Float::isFinite)?.coerceIn(if (allowNegative) -32f else 0f, 32f)
         }
         return PhotonPyramidOverrides(values[0], values[1], values[2], values[3], values[4])
     }
-
-    fun toPersistedString(): String = toList().joinToString(",") { it?.toString().orEmpty() }
-
-    companion object {
-        fun fromPersistedString(value: String): PhotonPyramidOverrides? {
-            val tokens = value.split(',')
-            if (tokens.size != 5) return null
-            val parsed = tokens.map { token ->
-                if (token.isEmpty()) null else token.toFloatOrNull() ?: return null
-            }
-            return PhotonPyramidOverrides(
-                parsed[0],
-                parsed[1],
-                parsed[2],
-                parsed[3],
-                parsed[4],
-            ).normalized()
-        }
-    }
 }
 
+/** SNR nodes for one independent luma protobuf field (strength, revert, or outlier). */
 data class PhotonSabreLumaTuningNodes(
     val snr5: PhotonPyramidOverrides = PhotonPyramidOverrides(),
     val snr20: PhotonPyramidOverrides = PhotonPyramidOverrides(),
     val snr40: PhotonPyramidOverrides = PhotonPyramidOverrides(),
 ) {
-    fun normalized(): PhotonSabreLumaTuningNodes = copy(
-        snr5 = snr5.normalized(),
-        snr20 = snr20.normalized(),
-        snr40 = snr40.normalized(),
+    fun normalized(allowNegative: Boolean = false): PhotonSabreLumaTuningNodes = copy(
+        snr5 = snr5.normalized(allowNegative),
+        snr20 = snr20.normalized(allowNegative),
+        snr40 = snr40.normalized(allowNegative),
     )
 
     fun valuesForSnr(snr: Float): List<Float?>? = when (snr) {
@@ -323,28 +169,11 @@ data class PhotonSabreLumaTuningNodes(
         else -> null
     }
 
-    fun toPersistedString(): String? {
-        val tuning = normalized()
-        if (tuning == DEFAULT) return null
-        return listOf(tuning.snr5, tuning.snr20, tuning.snr40)
-            .joinToString(";") { it.toPersistedString() }
-    }
-
     companion object {
         const val SNR_5 = 5f
         const val SNR_20 = 20f
         const val SNR_40 = 40f
         val DEFAULT = PhotonSabreLumaTuningNodes()
-
-        fun fromPersistedString(value: String?): PhotonSabreLumaTuningNodes {
-            val rows = value?.split(';') ?: return DEFAULT
-            if (rows.size != 3) return DEFAULT
-            return PhotonSabreLumaTuningNodes(
-                snr5 = PhotonPyramidOverrides.fromPersistedString(rows[0]) ?: return DEFAULT,
-                snr20 = PhotonPyramidOverrides.fromPersistedString(rows[1]) ?: return DEFAULT,
-                snr40 = PhotonPyramidOverrides.fromPersistedString(rows[2]) ?: return DEFAULT,
-            ).normalized()
-        }
     }
 }
 

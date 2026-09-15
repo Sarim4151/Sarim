@@ -58,6 +58,7 @@ import com.hinnka.mycamera.processor.CaptureProcessingQueue
 import com.hinnka.mycamera.processor.RawBurstFrameRole
 import com.hinnka.mycamera.processor.MgcSpatialOutputMode
 import com.hinnka.mycamera.processor.MgcMergeMethod
+import com.hinnka.mycamera.processor.PhotonSensorSizeTuning
 import com.hinnka.mycamera.processor.MgcRawMaxMode
 import com.hinnka.mycamera.processor.RawmaxExposurePlanner
 import com.hinnka.mycamera.processor.RawStackFrame
@@ -186,6 +187,14 @@ private data class RawSpectralFilmSettings(
 )
 
 private fun resolveEffectiveRawAutoExposure(): Boolean = false
+
+private fun rawProcessingMetadataProperties(
+    userPrefs: UserPreferences?,
+    sensorPhysicalAreaMm2: Float?,
+): Map<String, String> = PhotonSensorSizeTuning.captureProperties(
+    enabled = userPrefs?.let { it.useRawMax && it.rawMaxQualityTuningEnabled } == true,
+    sensorPhysicalAreaMm2 = sensorPhysicalAreaMm2,
+)
 
 private fun resolveCaptureSharpening(
     isRawCapture: Boolean,
@@ -1439,6 +1448,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             SharingStarted.Eagerly,
             RawSharpeningDefaults.DEFAULT_STRENGTH,
         )
+    val rawMaxQualityTuningEnabled: StateFlow<Boolean> = userPreferencesRepository.userPreferences
+        .map { it.rawMaxQualityTuningEnabled }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            PhotonSensorSizeTuning.DEFAULT_RAW_MAX_QUALITY_TUNING_ENABLED,
+        )
+
     val rawMaxNoiseReduction: StateFlow<Float> = userPreferencesRepository.userPreferences
         .map { it.rawMaxNoiseReduction }
         .stateIn(
@@ -2519,6 +2536,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { userPreferencesRepository.saveRawMaxSharpening(value) }
     }
 
+    fun setRawMaxQualityTuningEnabled(enabled: Boolean) {
+        viewModelScope.launch { userPreferencesRepository.saveRawMaxQualityTuningEnabled(enabled) }
+    }
+
     fun setRawMaxNoiseReduction(value: Float) {
         viewModelScope.launch { userPreferencesRepository.saveRawMaxNoiseReduction(value) }
     }
@@ -2961,6 +2982,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 ?: HncsFilmCurveMode.Standard,
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,
+            customProperties = rawProcessingMetadataProperties(
+                userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
+            ),
             rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
             rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
             rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
@@ -5683,7 +5707,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
                 customProperties = RawCaptureExposureCompensationMetadata.write(
-                    emptyMap(),
+                    rawProcessingMetadataProperties(
+                        userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
+                    ),
                     captureExposureCompensationEv,
                 ),
                 rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
@@ -5843,6 +5869,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     ?: HncsFilmCurveMode.Standard,
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
+                customProperties = rawProcessingMetadataProperties(
+                    userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
+                ),
                 rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
                 rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
@@ -6111,7 +6140,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
                 rawAutoExposure = effectiveRawAutoExposure,
                 customProperties = RawCaptureExposureCompensationMetadata.write(
-                    emptyMap(),
+                    rawProcessingMetadataProperties(
+                        userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
+                    ),
                     captureExposureCompensationEv,
                 ),
                 rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
@@ -6433,6 +6464,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 ?: HncsFilmCurveMode.Standard,
             rawExposureCompensation = userPrefs?.rawExposureCompensation ?: 0f,
             rawAutoExposure = effectiveRawAutoExposure,
+            customProperties = rawProcessingMetadataProperties(
+                userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
+            ),
             rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
             rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
             rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,

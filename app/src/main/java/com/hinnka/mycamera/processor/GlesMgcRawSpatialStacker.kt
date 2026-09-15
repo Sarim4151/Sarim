@@ -74,7 +74,6 @@ internal class GlesMgcRawSpatialStacker(
     private val exportGpuLinearRgbSource: Boolean,
     private val gpuLinearRgbStorage: GpuLinearRgbStorage = GpuLinearRgbStorage.RGBA16UI,
     private val processorPipeline: MgcRawProcessorPipeline = MgcRawProcessorPipeline.SPATIAL,
-    private val coreImagingTuning: PhotonCoreImagingTuning = PhotonCoreImagingTuning.DEFAULT,
     private val computeFastMomentsRawStats: Boolean = false,
 ) {
     private data class TextureLevel(
@@ -2016,7 +2015,6 @@ internal class GlesMgcRawSpatialStacker(
                 ),
                 mgcDenoiseTuningSnr = finishRawDenoiseSnr,
                 mgcSharpenAttenuationScale = finishRawSharpenAttenuationScale,
-                coreImagingTuning = coreImagingTuning,
                 mgcSpatialReferenceOnlyDiagnostic = referenceOnly,
                 fastMomentsRawStats = fastMomentsRawStats,
             )
@@ -2180,7 +2178,7 @@ internal class GlesMgcRawSpatialStacker(
             val sabreKernelParameters = MgcSabreKernelTuning.build(
                 referenceSnr = kernelTuning.referenceSnr,
                 frameCount = frames.size,
-                mergeGradientThreshold = coreImagingTuning.fusion.mergeGradientThreshold,
+                mergeGradientThreshold = PhotonCoreImagingTuning.fusion.mergeGradientThreshold,
             )
             val sabreResolveParameters = MgcSabreResolveTuning.build(
                 referenceSnr = kernelTuning.referenceSnr,
@@ -2212,7 +2210,7 @@ internal class GlesMgcRawSpatialStacker(
                     "${sabreKernelParameters.anisotropyScale}," +
                     "${sabreKernelParameters.coherenceScale} " +
                     "forceReferenceColorRgb=${sabreKernelParameters.forceReferenceColorRgb} " +
-                    "mergeGradientThreshold=${coreImagingTuning.fusion.mergeGradientThreshold ?: "adaptive"} " +
+                    "mergeGradientThreshold=${PhotonCoreImagingTuning.fusion.mergeGradientThreshold ?: "adaptive"} " +
                     "guideColorSpace=sqrt noiseLut=qmc64x10 rejectionGuideFilter=bicubic-both-frames " +
                     "alignmentInputGain=${referenceCalibration.alignmentGain} " +
                     "alignmentDomain=signed-s16",
@@ -2372,13 +2370,15 @@ internal class GlesMgcRawSpatialStacker(
             val mergedNoiseModel = MgcSabreMergedNoiseModel.merge(
                 noiseFrames,
                 kernelTuning.referenceSnr,
+                PhotonCoreImagingTuning.denoise.noiseSpectrumSeed,
             )
             PLog.i(
                 SABRE_TAG,
                 "MGC Sabre merged NoiseModel diagnosticAverageMergeFactor=$sabreAverageMergeFactor " +
                     "snrCorrection=${MgcSabreMergedNoiseModel.snrCorrection(kernelTuning.referenceSnr)} " +
                     "read=${mergedNoiseModel.read.contentToString()} " +
-                    "shot=${mergedNoiseModel.shot.contentToString()}",
+                    "shot=${mergedNoiseModel.shot.contentToString()} " +
+                    "spectrumSeed=${mergedNoiseModel.correlation[0]}",
             )
 
             renderSabreDehomogenize(
@@ -2635,7 +2635,6 @@ internal class GlesMgcRawSpatialStacker(
                 mgcDenoiseCorrelation = mergedNoiseModel.correlation,
                 mgcDenoiseTuningSnr = finishRawDenoiseSnr,
                 mgcSharpenAttenuationScale = sabreResolveParameters.demosaicSharpness,
-                coreImagingTuning = coreImagingTuning,
             )
             returned = true
             result
@@ -3752,7 +3751,7 @@ internal class GlesMgcRawSpatialStacker(
         val referenceSignal = if (processorPipeline == MgcRawProcessorPipeline.SABRE) {
             resolveFusionReferenceSignal(
                 measuredSignal = measuredReferenceSignal,
-                fallbackSignal = coreImagingTuning.fusion.missingReferenceSignal,
+                fallbackSignal = PhotonCoreImagingTuning.fusion.missingReferenceSignal,
             )
         } else {
             measuredReferenceSignal ?: 0f

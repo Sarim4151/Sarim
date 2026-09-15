@@ -61,6 +61,7 @@ import com.hinnka.mycamera.model.CameraPreset
 import com.hinnka.mycamera.model.LutSelectorMode
 import com.hinnka.mycamera.mgc.PhotonLookContract
 import com.hinnka.mycamera.processor.DenoiseStrength
+import com.hinnka.mycamera.processor.PhotonSensorSizeTuning
 import com.hinnka.mycamera.processor.MgcRawMaxMode
 import org.json.JSONObject
 
@@ -187,6 +188,8 @@ data class UserPreferences(
     val useMultipleExposure: Boolean = false, // 是否启用多重曝光
     val multipleExposureCount: Int = 2, // 多重曝光张数
     val useRawMax: Boolean = false, // HDR+：RAW 多帧融合
+    val rawMaxQualityTuningEnabled: Boolean =
+        PhotonSensorSizeTuning.DEFAULT_RAW_MAX_QUALITY_TUNING_ENABLED,
     val hdrPlusMergeMode: MgcRawMaxMode = MgcRawMaxMode.DEFAULT,
     val hdrPlusFrameCount: Int = MultiFrameConfig.DEFAULT_HDR_PLUS_FRAME_COUNT,
     val hdrPlusBracketExposureEnabled: Boolean =
@@ -434,6 +437,7 @@ class UserPreferencesRepository(private val context: Context) {
 
         // 多帧合成 Key
         private val USE_JPG_MAX = booleanPreferencesKey("use_jpg_max")
+        private val RAW_MAX_QUALITY_TUNING_ENABLED = booleanPreferencesKey("raw_max_quality_tuning_enabled")
         private val USE_RAW_MAX = booleanPreferencesKey("use_raw_max")
         private val LEGACY_USE_MULTI_FRAME = booleanPreferencesKey("use_multi_frame")
         private val LEGACY_USE_HDR_COMPOSITION = booleanPreferencesKey("use_hdr_composition")
@@ -739,6 +743,8 @@ class UserPreferencesRepository(private val context: Context) {
                     ?: MultiFrameConfig.DEFAULT_SUPER_RESOLUTION_SCALE,
                 useMultipleExposure = preferences[USE_MULTIPLE_EXPOSURE] ?: false,
                 multipleExposureCount = preferences[MULTIPLE_EXPOSURE_COUNT] ?: 2,
+                rawMaxQualityTuningEnabled = preferences[RAW_MAX_QUALITY_TUNING_ENABLED]
+                    ?: PhotonSensorSizeTuning.DEFAULT_RAW_MAX_QUALITY_TUNING_ENABLED,
                 useRawMax = useRawMax,
                 hdrPlusMergeMode = hdrPlusMergeMode,
                 hdrPlusFrameCount = preferences[HDR_PLUS_FRAME_COUNT]
@@ -1737,6 +1743,12 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveRawMaxSharpening(value: Float) {
         context.dataStore.edit { preferences ->
             preferences[RAW_MAX_SHARPENING_KEY] = RawSharpeningDefaults.normalize(value)
+        }
+    }
+
+    suspend fun saveRawMaxQualityTuningEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[RAW_MAX_QUALITY_TUNING_ENABLED] = enabled
         }
     }
 

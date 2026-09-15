@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.raw
 
 import android.content.Context
+import com.hinnka.mycamera.processor.PhotonSensorSizeTuning
 import com.hinnka.mycamera.processor.DenoiseStrength
 import com.hinnka.mycamera.processor.PhotonSabreLumaTuningNodes
 import com.hinnka.mycamera.processor.RawNoiseModel
@@ -77,7 +78,7 @@ internal object MgcFullResolutionDenoise {
         val chromaCorrelation: FloatArray,
     )
 
-    private data class TuningPoint(
+    internal data class TuningPoint(
         val snr: Float,
         val tuning: Tuning,
     )
@@ -184,14 +185,19 @@ internal object MgcFullResolutionDenoise {
         val mergedCorrelation = if (useSpatialModel || useSabreModel) {
             metadata.mgcDenoiseCorrelation
         } else null
-        val coreTuning = metadata.coreImagingTuning.normalized()
+        val coreTuning = PhotonSensorSizeTuning.resolve(metadata.rawMaxQualityTuningSensorAreaMm2)
+        // Only a newly constructed single-frame model uses the seed. Fused models must
+        // supply their spectrum; measured/prepared spectra retain their own amplitude.
+        val defaultCorrelation = if (!useSpatialModel && !useSabreModel) {
+            FloatArray(128) { coreTuning.denoise.noiseSpectrumSeed }
+        } else null
         val lumaCorrelation = applyFusionCorrelationScale(
-            correlation = preparedYuvNoiseModel?.lumaCorrelation ?: mergedCorrelation,
+            correlation = preparedYuvNoiseModel?.lumaCorrelation ?: mergedCorrelation ?: defaultCorrelation,
             scale = coreTuning.fusion.noiseCorrelationScale,
             enabled = useSabreModel,
         )
         val chromaCorrelation = applyFusionCorrelationScale(
-            correlation = preparedYuvNoiseModel?.chromaCorrelation ?: mergedCorrelation,
+            correlation = preparedYuvNoiseModel?.chromaCorrelation ?: mergedCorrelation ?: defaultCorrelation,
             scale = coreTuning.fusion.noiseCorrelationScale,
             enabled = useSabreModel,
         )
@@ -266,6 +272,8 @@ internal object MgcFullResolutionDenoise {
                         tuning = point.tuning,
                         snr = point.snr,
                         nodes = coreTuning.denoise.sabreLumaNodes,
+                        revertNodes = coreTuning.denoise.sabreLumaRevertNodes,
+                        outlierNodes = coreTuning.denoise.sabreLumaOutlierNodes,
                     ),
                 )
             }
@@ -358,6 +366,7 @@ internal object MgcFullResolutionDenoise {
                 "rgbShot=${rgbShot.contentToString()} " +
                 "rgbRead=${rgbRead.contentToString()} " +
                 "rgbWb=${rgbWhiteBalance.contentToString()} " +
+                "qualityTuningSensorAreaMm2=${metadata.rawMaxQualityTuningSensorAreaMm2} " +
                 "tuningInterpolation=linear " +
                 "lumaScales=${coreTuning.denoise.lumaStrengthScale} " +
                 "detailReconstructionScales=${coreTuning.denoise.detailReconstructionScale} " +
@@ -500,15 +509,22 @@ internal object MgcFullResolutionDenoise {
         tuning: Tuning,
         snr: Float,
         nodes: PhotonSabreLumaTuningNodes,
+        revertNodes: PhotonSabreLumaTuningNodes = PhotonSabreLumaTuningNodes.DEFAULT,
+        outlierNodes: PhotonSabreLumaTuningNodes = PhotonSabreLumaTuningNodes.DEFAULT,
     ): Tuning {
-        val row = nodes.normalized().valuesForSnr(snr) ?: return tuning.copyArrays()
-        require(row.size == tuning.strength.size)
+        fun overrideField(
+            original: FloatArray,
+            overrides: PhotonSabreLumaTuningNodes,
+            allowNegative: Boolean = false,
+        ): FloatArray {
+            val row = overrides.normalized(allowNegative).valuesForSnr(snr) ?: return original.copyOf()
+            require(row.size == original.size)
+            return FloatArray(original.size) { index -> row[index] ?: original[index] }
+        }
         return tuning.copy(
-            strength = FloatArray(tuning.strength.size) { index ->
-                row[index] ?: tuning.strength[index]
-            },
-            revertFactor = tuning.revertFactor.copyOf(),
-            outlierDistance = tuning.outlierDistance.copyOf(),
+            strength = overrideField(tuning.strength, nodes),
+            revertFactor = overrideField(tuning.revertFactor, revertNodes, allowNegative = true),
+            outlierDistance = overrideField(tuning.outlierDistance, outlierNodes, allowNegative = true),
         )
     }
 
@@ -550,13 +566,13 @@ internal object MgcFullResolutionDenoise {
     }
 
     /** Exact upper-bound clamp and linear SNR interpolation from libgcastartup.so+0x33ec5d4. */
-    private fun interpolateTuning(
+    internal fun interpolateTuning(
         snr: Float,
         points: List<TuningPoint>,
     ): Tuning {
         val finiteSnr = snr.takeIf { it.isFinite() && it >= 0f }
             ?: points.first().snr
-        val upperIndex = points.indexOfFirst { it.snr >= finiteSnr }
+        val upperIndex = points.indexOfFirst { it.snr > finiteSnr }
         if (upperIndex < 0) return points.last().tuning.copyArrays()
         if (upperIndex == 0) return points.first().tuning.copyArrays()
         val lower = points[upperIndex - 1]
@@ -565,11 +581,13 @@ internal object MgcFullResolutionDenoise {
             (finiteSnr - lower.snr) /
                 (upper.snr - lower.snr)
             ).coerceIn(0f, 1f)
+        val lowerAmount = 1f - amount
         fun interpolate(
             first: FloatArray,
             second: FloatArray,
         ): FloatArray = FloatArray(5) { index ->
-            first[index] + (second[index] - first[index]) * amount
+            // libgcastartup 0x54b3794..0x54b37ac: two FMULs, then FADD (not FMADD).
+            lowerAmount * first[index] + second[index] * amount
         }
         return Tuning(
             strength = interpolate(

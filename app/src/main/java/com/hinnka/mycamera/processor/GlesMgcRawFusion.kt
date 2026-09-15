@@ -32,7 +32,6 @@ internal class GlesMgcRawFusion(
     private val useCurrentGlContext: Boolean,
     private val exportGpuLinearRgbSource: Boolean,
     private val gpuLinearRgbStorage: GpuLinearRgbStorage,
-    private val coreImagingTuning: PhotonCoreImagingTuning = PhotonCoreImagingTuning.DEFAULT,
 ) {
     private val width = sourceBounds.width()
     private val height = sourceBounds.height()
@@ -126,7 +125,6 @@ internal class GlesMgcRawFusion(
                 useCurrentGlContext = useCurrentGlContext,
                 exportGpuLinearRgbSource = exportGpuLinearRgbSource,
                 gpuLinearRgbStorage = gpuLinearRgbStorage,
-                coreImagingTuning = coreImagingTuning,
             ).processFrames(referenceFirstFrames)?.copy(
                 fastMomentsRawStats = fastMomentsRawStats,
             )
@@ -220,7 +218,6 @@ internal class GlesMgcRawFusion(
             useCurrentGlContext = useCurrentGlContext,
             exportGpuLinearRgbSource = exportGpuLinearRgbSource,
             gpuLinearRgbStorage = gpuLinearRgbStorage,
-            coreImagingTuning = coreImagingTuning,
             computeFastMomentsRawStats = canReuseSpatialReferenceUpload,
         ).processFrames(scheduledFrames).let { result ->
             fastMomentsRawStats?.let { stats ->

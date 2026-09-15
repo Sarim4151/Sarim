@@ -1,6 +1,8 @@
 package com.hinnka.mycamera.raw
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import kotlin.math.PI
 import kotlin.math.abs
@@ -9,6 +11,29 @@ import kotlin.math.max
 import kotlin.math.sin
 
 class DemosaicNoiseSpectrumTest {
+    @Test
+    fun propagationPreservesInputAmplitudeWithoutChangingNormalizedShape() {
+        val size = DemosaicNoiseSpectrum.SIZE
+        val residuals = arrayOf(FloatArray(size * size) { index ->
+            sin(index * 0.071).toFloat() + cos(index / size * 0.113).toFloat()
+        })
+        val input = FloatArray(size) { 0.5f + it.toFloat() / (size - 1) }
+        val unitMean = requireNotNull(DemosaicNoiseSpectrum.propagatedCorrelation(
+            residuals, intArrayOf(0), input,
+        ))
+        assertEquals(1.0, unitMean.average(), 1e-6)
+        for (amplitude in listOf(0f, 0.5f, 2f)) {
+            val propagated = requireNotNull(DemosaicNoiseSpectrum.propagatedCorrelation(
+                residuals, intArrayOf(0), FloatArray(size) { input[it] * amplitude },
+            ))
+            assertEquals(amplitude.toDouble(), propagated.average(), 1e-6)
+            assertArrayEquals(FloatArray(size) { unitMean[it] * amplitude }, propagated, 1e-6f)
+        }
+        assertNull(DemosaicNoiseSpectrum.propagatedCorrelation(
+            residuals, intArrayOf(0), FloatArray(size) { Float.NaN },
+        ))
+    }
+
     @Test
     fun halfBinFftMatchesLegacyDirectTransform() {
         val size = DemosaicNoiseSpectrum.SIZE

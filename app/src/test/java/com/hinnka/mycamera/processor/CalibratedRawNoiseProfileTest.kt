@@ -16,6 +16,28 @@ import kotlin.math.abs
  */
 class CalibratedRawNoiseProfileTest {
     @Test
+    fun bundledAgc26CMatchesOriginalArm64SamplesAcrossAnalogGainBoundary() {
+        val profile = java.io.File("src/main/assets/noise_profiles/GC02M1_LMIPRO.c")
+            .inputStream().use { CalibratedRawNoiseProfile.parseGcamC("agc26", it) }
+        assertEquals(600, profile.maxAnalogSensitivity)
+        val rows = requireNotNull(javaClass.getResourceAsStream(
+            "/noise_profiles/agc96_model26_samples.csv",
+        )).bufferedReader().use { it.readLines().drop(1) }
+        assertEquals(56, rows.size)
+        for (line in rows) {
+            val row = line.split(',')
+            val iso = row[0].toInt()
+            val plane = row[1].toInt()
+            // A generated .c owns its ISO divisor; target-camera gain limits do not replace it.
+            for ((minimumIso, maximumAnalogIso) in listOf(0 to 0, 50 to 400, 100 to 1600)) {
+                val model = requireNotNull(profile.evaluate(iso, minimumIso, maximumAnalogIso))
+                assertEquals("S: $line", row[7].toFloat().toRawBits(), model.shotNoise[plane].toRawBits())
+                assertEquals("O: $line", row[8].toFloat().toRawBits(), model.readNoise[plane].toRawBits())
+            }
+        }
+    }
+
+    @Test
     fun pixel5MatchesOriginalAgcArm64SamplesWithTargetCameraGainLimits() {
         // Oracle: original AGC9.6.19 V7 ARM64 callback, not this implementation.
         // See research/agc_96_v7_defaults and extract_agc96_pixel5_noise_model.py.

@@ -142,6 +142,9 @@ class RawNoiseProfileManager(context: Context) {
         private const val TAG = "RawNoiseProfileManager"
         const val SYSTEM_PROFILE_ID = RawNoiseProfileSelection.SYSTEM_CAMERA2_ID
         const val ADAPTIVE_PROFILE_ID = "adaptive_x9_ultra"
+        const val AGC26_PROFILE_ID = "builtin_noise_agc26_gc02m1_lmipro"
+        const val LGV50_PROFILE_ID = "builtin_noise_lgv50_imx363"
+        const val GALAXY_M51_PROFILE_ID = "builtin_noise_galaxym51_gc5035_54"
         const val PIXEL5_PROFILE_ID = "builtin_noise_pixel5_agc"
         const val PIXEL8_PRO_PROFILE_ID = "builtin_noise_pixel8_pro"
         const val X9_ULTRA_PROFILE_ID = "builtin_noise_x9_ultra"
@@ -155,6 +158,27 @@ class RawNoiseProfileManager(context: Context) {
                 filePath = null,
                 isBuiltIn = true,
                 nameResId = R.string.raw_noise_profile_pixel5,
+            ),
+            RawNoiseProfileInfo(
+                id = AGC26_PROFILE_ID,
+                nameMap = emptyMap(),
+                filePath = "noise_profiles/GC02M1_LMIPRO.c",
+                isBuiltIn = true,
+                nameResId = R.string.raw_noise_profile_agc26,
+            ),
+            RawNoiseProfileInfo(
+                id = LGV50_PROFILE_ID,
+                nameMap = emptyMap(),
+                filePath = "noise_profiles/LGV50_IMX363.c",
+                isBuiltIn = true,
+                nameResId = R.string.raw_noise_profile_lgv50,
+            ),
+            RawNoiseProfileInfo(
+                id = GALAXY_M51_PROFILE_ID,
+                nameMap = emptyMap(),
+                filePath = "noise_profiles/GalaxyM51_SLSI_GC5035_54.c",
+                isBuiltIn = true,
+                nameResId = R.string.raw_noise_profile_galaxy_m51,
             ),
             RawNoiseProfileInfo(
                 id = SYSTEM_PROFILE_ID,

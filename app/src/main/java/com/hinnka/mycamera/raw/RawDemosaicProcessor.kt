@@ -29,7 +29,6 @@ import com.hinnka.mycamera.processor.DenoiseStrength
 import com.hinnka.mycamera.processor.GlesPixelBufferTransfer
 import com.hinnka.mycamera.processor.GpuBayerSource
 import com.hinnka.mycamera.processor.GpuLinearRgbSource
-import com.hinnka.mycamera.processor.PhotonCoreImagingTuning
 import com.hinnka.mycamera.processor.GpuLinearRgbStorage
 import com.hinnka.mycamera.processor.GpuStackCompletionTimeline
 import com.hinnka.mycamera.processor.RawNoiseModel
@@ -228,8 +227,7 @@ class RawDemosaicProcessor {
             mgcSpatialStrengthMap = baseMetadata?.mgcSpatialStrengthMap,
             mgcDenoiseTuningSnr = baseMetadata?.mgcDenoiseTuningSnr,
             mgcSharpenAttenuationScale = baseMetadata?.mgcSharpenAttenuationScale,
-            coreImagingTuning = baseMetadata?.coreImagingTuning
-                ?: PhotonCoreImagingTuning.DEFAULT,
+            rawMaxQualityTuningSensorAreaMm2 = baseMetadata?.rawMaxQualityTuningSensorAreaMm2,
             rotation = dngRawData.rotation,
             profileGainTableMap = baseMetadata?.profileGainTableMap
         )
@@ -1816,7 +1814,7 @@ class RawDemosaicProcessor {
         rawWhiteLevelMode: String? = null,
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
-        processLocalCoreImagingTuning: PhotonCoreImagingTuning = PhotonCoreImagingTuning.DEFAULT,
+        processLocalQualityTuningSensorAreaMm2: Float? = null,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
@@ -1863,7 +1861,7 @@ class RawDemosaicProcessor {
                 rawWhiteLevelMode = rawWhiteLevelMode,
                 rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
-                processLocalCoreImagingTuning = processLocalCoreImagingTuning,
+                processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
                 rawDcpId = rawDcpId,
@@ -1913,6 +1911,7 @@ class RawDemosaicProcessor {
         rawWhitePointCorrection: Float = 0f,
         applyLensShadingCorrection: Boolean = true,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningSensorAreaMm2: Float? = null,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
@@ -1954,6 +1953,7 @@ class RawDemosaicProcessor {
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 applyLensShadingCorrection = applyLensShadingCorrection,
                 sharpeningValue = sharpeningValue,
+                processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
                 rawDcpId = rawDcpId,
@@ -2055,8 +2055,8 @@ class RawDemosaicProcessor {
         rawWhiteLevelMode: String? = null,
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningSensorAreaMm2: Float? = null,
         processLocalMgcSharpenAttenuationScale: Float? = null,
-        processLocalCoreImagingTuning: PhotonCoreImagingTuning = PhotonCoreImagingTuning.DEFAULT,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
@@ -2103,9 +2103,9 @@ class RawDemosaicProcessor {
                 rawWhiteLevelMode = rawWhiteLevelMode,
                 rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
+                processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
                 processLocalMgcSharpenAttenuationScale =
                     processLocalMgcSharpenAttenuationScale,
-                processLocalCoreImagingTuning = processLocalCoreImagingTuning,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
                 rawDcpId = rawDcpId,
@@ -2165,6 +2165,7 @@ class RawDemosaicProcessor {
         rawWhiteLevelMode: String? = null,
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningSensorAreaMm2: Float? = null,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
@@ -2261,6 +2262,7 @@ class RawDemosaicProcessor {
                 rawWhiteLevelMode = rawWhiteLevelMode,
                 rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
+                processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
                 rawDcpId = rawDcpId,
@@ -2318,8 +2320,8 @@ class RawDemosaicProcessor {
         rawWhiteLevelMode: String? = null,
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningSensorAreaMm2: Float? = null,
         processLocalMgcSharpenAttenuationScale: Float? = null,
-        processLocalCoreImagingTuning: PhotonCoreImagingTuning = PhotonCoreImagingTuning.DEFAULT,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
         rawDcpId: String? = null,
@@ -2523,7 +2525,6 @@ class RawDemosaicProcessor {
                 mgcDenoiseTuningSnr = null,
                 mgcSharpenAttenuationScale =
                     processLocalMgcSharpenAttenuationScale,
-                coreImagingTuning = processLocalCoreImagingTuning.normalized(),
             )
             actualRotation = if (dngRawData.rotation != 0) dngRawData.rotation else rotation
             embeddedDngRenderPlan = selectedEmbeddedDngProfile?.let { selectedProfile ->
@@ -2570,6 +2571,12 @@ class RawDemosaicProcessor {
                 .rawNoiseProfileManager
                 .resolveSelection(rawNoiseProfileId, actualMetadata),
         )
+        actualMetadata = actualMetadata?.let {
+            it.copy(
+                rawMaxQualityTuningSensorAreaMm2 =
+                    processLocalQualityTuningSensorAreaMm2 ?: it.rawMaxQualityTuningSensorAreaMm2,
+            )
+        }
         val captureProfilePass = sceneExposureRequest != null ||
             legacyAutoExposureRequest != null || captureProfilePreparationRequested
         if (!captureProfilePass) {

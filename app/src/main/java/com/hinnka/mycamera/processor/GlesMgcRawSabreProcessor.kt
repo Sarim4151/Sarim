@@ -26,7 +26,6 @@ internal class GlesMgcRawSabreProcessor(
     private val useCurrentGlContext: Boolean,
     private val exportGpuLinearRgbSource: Boolean,
     private val gpuLinearRgbStorage: GpuLinearRgbStorage,
-    private val coreImagingTuning: PhotonCoreImagingTuning,
 ) {
     fun processFrames(frames: List<RawStackFrame>): RawStackResult? {
         if (frames.isEmpty()) return null
@@ -77,7 +76,6 @@ internal class GlesMgcRawSabreProcessor(
             exportGpuLinearRgbSource = exportGpuLinearRgbSource,
             gpuLinearRgbStorage = gpuLinearRgbStorage,
             processorPipeline = MgcRawProcessorPipeline.SABRE,
-            coreImagingTuning = coreImagingTuning,
         ).processFrames(admitted)
     }
 

@@ -1217,4 +1217,6 @@
     <string name="settings_raw_camera_color_matching_description">開啟時會根據拍攝相機調整色彩，關閉時使用原版處理。</string>
     <string name="settings_color_palette">調色盤</string>
     <string name="settings_color_palette_description">在編輯頁顯示調色盤，可同時調整影調和飽和度。</string>
+    <string name="settings_raw_max_quality_tuning">HDR+ 畫質調校</string>
+    <string name="settings_raw_max_quality_tuning_description">按實體感光元件尺寸調整融合雜訊估計與降噪。關閉時使用預設成像參數。</string>
 </resources>

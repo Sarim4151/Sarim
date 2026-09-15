@@ -3,6 +3,7 @@ package com.hinnka.mycamera.raw
 import android.opengl.GLES30
 import android.opengl.GLES31
 import android.util.Half
+import com.hinnka.mycamera.processor.PhotonCoreImagingTuning
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
@@ -32,7 +33,11 @@ internal object DemosaicNoiseSpectrum {
         channels: IntArray,
         inputCorrelation: FloatArray,
     ): FloatArray? {
-        if (inputCorrelation.size != SIZE) return null
+        if (inputCorrelation.size != SIZE ||
+            inputCorrelation.any { !it.isFinite() || it < 0f }
+        ) return null
+        val inputMean = inputCorrelation.average()
+        if (inputMean == 0.0) return FloatArray(SIZE)
         val demosaicPower = halfBinDirectionalPower(residuals, channels)
         val demosaicPowerMean = demosaicPower.average()
         if (!demosaicPowerMean.isFinite() || demosaicPowerMean <= 0.0) return null
@@ -42,8 +47,11 @@ internal object DemosaicNoiseSpectrum {
         }
         val compositionMean = composed.average()
         if (!compositionMean.isFinite() || compositionMean <= 0.0) return null
+        // Synthetic calibration measures demosaic transfer using read/shot coefficients,
+        // without the input spectrum. Normalize only the composed shape: discarding the
+        // input amplitude here would erase a non-unit NoiseModel constructor seed.
         return FloatArray(SIZE) { index ->
-            (composed[index] / compositionMean).toFloat()
+            (composed[index] / compositionMean * inputMean).toFloat()
         }.takeIf { spectrum -> spectrum.all { it.isFinite() && it >= 0f } }
     }
 
@@ -427,11 +435,12 @@ internal class DemosaicNoisePropagationCalibrator(
     ): DemosaicNoiseTransfer? {
         val rgbNoise = MgcFullResolutionDenoise.resolveUserAdjustmentCameraRgbNoise(metadata)
             ?: return null
+        val spectrumSeed = PhotonCoreImagingTuning.denoise.noiseSpectrumSeed
         val propagationMetadata = metadata.copy(
             frameCount = 1,
             mgcDenoiseReadNoise = rgbNoise.read,
             mgcDenoiseShotNoise = rgbNoise.shot,
-            mgcDenoiseCorrelation = FloatArray(SPECTRUM_BINS) { 1f },
+            mgcDenoiseCorrelation = FloatArray(SPECTRUM_BINS) { spectrumSeed },
             mgcSpatialStrengthMap = null,
         )
         return measure(propagationMetadata, calculationWb4)?.also { transfer ->

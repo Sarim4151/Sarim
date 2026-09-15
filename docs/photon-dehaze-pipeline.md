@@ -79,15 +79,15 @@ HDRNet luma，否则彩色区域的 rolloff 强度会偏移。随后执行相同
 曲线定义在中性灰轴上。PGTM 的空间/强度采样与标量格式仍有限制。运行期只查一次
 PGTM，不会再次执行 HDRNet、Dehaze 或 DHA。
 
-## 控制与持久化
+## 本地控制与曝光匹配持久化
 
-`PhotonDehazeTuning` 仍使用以下字段：
+去雾直接使用 `PhotonCoreImagingTuning.dehaze` 的本地默认值：
 
-- `photonDehazeEnabled`
-- `photonDehazeStrength`（`0..4`）
-- `photonDehazeDynamicHighlightStrength`（`0..1`）
+- `enabled`
+- `strength`（`0..4`）
+- `dynamicHighlightStrength`（`0..1`）
 
-默认启用，强度均为 `1`。参数只在 HDRNet PGTM 生成或重新生成时消费；Classic 与 Local
+默认启用，强度均为 `1`，不做持久化读写。参数只在 HDRNet PGTM 生成或重新生成时消费；Classic 与 Local
 Laplacian 路径不执行 Dehaze/DHA。拍摄时得到的 HDRNet 下游匹配曝光独立保存，重新生成 PGTM
 时恢复并使用相同 rolloff，仅按通用 EV 范围约束；不会折回 short gain、HDR ratio 或
 BaselineExposure。持久化契约为 `hdrnet_post_dehaze_viewfinder_rolloff_v2`；旧的线性增益

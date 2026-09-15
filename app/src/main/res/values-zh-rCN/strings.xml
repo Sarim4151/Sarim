@@ -1242,4 +1242,6 @@
     <string name="settings_raw_camera_color_matching_description">开启时根据拍摄相机调整色彩，关闭时使用原版处理。</string>
     <string name="settings_color_palette">调色盘</string>
     <string name="settings_color_palette_description">在编辑页显示调色盘，可同时调整影调和饱和度。</string>
+    <string name="settings_raw_max_quality_tuning">HDR+ 画质调优</string>
+    <string name="settings_raw_max_quality_tuning_description">按物理传感器尺寸调整融合噪声估计和降噪。关闭时使用默认成像参数。</string>
 </resources>

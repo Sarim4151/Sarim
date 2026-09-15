@@ -7,6 +7,7 @@ import android.opengl.GLES31
 import com.hinnka.mycamera.processor.GlesComputeWorkGroup
 import com.hinnka.mycamera.processor.GlesGpuCompletion
 import com.hinnka.mycamera.processor.GlesGpuScheduler
+import com.hinnka.mycamera.processor.PhotonCoreImagingTuning
 import com.hinnka.mycamera.utils.PLog
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
@@ -1588,7 +1589,7 @@ internal class DngPhotonProfileGainTableAlgorithm {
                 GLES31.glGetUniformLocation(hdrNetInputProgram, "uWarpCount"),
                 activeWarpParameters.size / 8,
             )
-            val dehazeTuning = input.metadata.coreImagingTuning.dehaze.normalized()
+            val dehazeTuning = PhotonCoreImagingTuning.dehaze.normalized()
             val modelInputBuffer = ByteBuffer.allocateDirect(inputFloatCount * Float.SIZE_BYTES)
                 .order(ByteOrder.nativeOrder())
             val modelOutputBuffer = ByteBuffer.allocateDirect(

@@ -7,8 +7,9 @@ internal object MgcSabreMergedNoiseModel {
 
     data class Output(val read: FloatArray, val shot: FloatArray, val correlation: FloatArray)
 
-    fun merge(frames: List<Frame>, referenceSnr: Float): Output {
+    fun merge(frames: List<Frame>, referenceSnr: Float, noiseSpectrumSeed: Float): Output {
         require(frames.isNotEmpty())
+        require(noiseSpectrumSeed.isFinite() && noiseSpectrumSeed >= 0f)
         val readSum = DoubleArray(3)
         val shotSum = DoubleArray(3)
         var weightSum = 0.0
@@ -34,9 +35,9 @@ internal object MgcSabreMergedNoiseModel {
         val correction = 1f / samples
         val read = FloatArray(3) { readSum[it].toFloat() * correction }
         val shot = FloatArray(3) { (shotSum[it] / weightSum).toFloat() * correction }
-        // Physical RAW inputs have unit spectra and no quadratic term. Weighted composition
-        // preserves that spectrum; neither RBF weight statistics nor frame count scales it.
-        return Output(read, shot, FloatArray(128) { 1f })
+        // This model has no measured input spectrum. AGC's lib_luma_noise_key sets the
+        // constructor seed; neither RBF weight statistics nor frame count scales it.
+        return Output(read, shot, FloatArray(128) { noiseSpectrumSeed })
     }
 
     /** Average(1 / d) scales every coefficient by d; it preserves the correlation spectrum. */

@@ -312,4 +312,6 @@
     <string name="settings_color_palette">색상 팔레트</string>
     <string name="settings_color_palette_description">편집 화면에 색상 팔레트를 표시하여 명암과 채도를 함께 조정합니다.</string>
     <string name="recipe_palette_tone">명암</string>
+    <string name="settings_raw_max_quality_tuning">HDR+ 화질 조정</string>
+    <string name="settings_raw_max_quality_tuning_description">센서의 물리적 크기에 맞춰 합성 노이즈 추정과 노이즈 감소를 조정합니다. 끄면 기본 이미지 처리 매개변수를 사용합니다.</string>
 </resources>

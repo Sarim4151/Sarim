@@ -929,4 +929,6 @@
     <string name="settings_color_palette">จานสี</string>
     <string name="settings_color_palette_description">แสดงจานสีในหน้าแก้ไขเพื่อปรับโทนแสงและความอิ่มสีพร้อมกัน</string>
     <string name="recipe_palette_tone">โทนแสง</string>
+    <string name="settings_raw_max_quality_tuning">ปรับคุณภาพภาพ HDR+</string>
+    <string name="settings_raw_max_quality_tuning_description">ปรับการประเมินสัญญาณรบกวนในการรวมภาพและการลดสัญญาณรบกวนตามขนาดจริงของเซ็นเซอร์ เมื่อปิดจะใช้พารามิเตอร์ภาพเริ่มต้น</string>
 </resources>
