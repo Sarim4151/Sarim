@@ -313,4 +313,15 @@
     <string name="recipe_palette_tone">Tonwerte</string>
     <string name="settings_raw_max_quality_tuning">HDR+ Bildqualitätsoptimierung</string>
     <string name="settings_raw_max_quality_tuning_description">Rauschschätzung bei der Fusion und Rauschminderung an die physische Sensorgröße anpassen. Wenn deaktiviert, werden die Standardparameter verwendet.</string>
+    <string name="settings_shutter_sound_single">Einzelaufnahmeton</string>
+    <string name="settings_shutter_sound_burst">Serienaufnahmeton</string>
+    <string name="settings_shutter_sound_custom_description">Audioclip mit bis zu 3 Sekunden, 48 kHz, mono oder stereo importieren. Der Serienaufnahmeton wird während der Aufnahme wiederholt.</string>
+    <string name="settings_shutter_sound_default">Standard</string>
+    <string name="settings_shutter_sound_choose">Audio auswählen</string>
+    <string name="settings_shutter_sound_preview">Vorschau</string>
+    <string name="settings_shutter_sound_reset">Standard wiederherstellen</string>
+    <string name="settings_shutter_sound_importing">Audio wird importiert…</string>
+    <string name="settings_shutter_sound_import_failed">Audio kann nicht importiert werden. Wählen Sie einen abspielbaren Clip mit bis zu 3 Sekunden, 48 kHz, mono oder stereo (maximal 10 MB).</string>
+    <string name="settings_shutter_sound_save_failed">Toneinstellungen können nicht gespeichert werden. Bitte versuchen Sie es erneut.</string>
+    <string name="settings_shutter_sound_preview_failed">Ton kann nicht wiedergegeben werden. Bitte importieren Sie ihn erneut oder stellen Sie den Standard wieder her.</string>
 </resources>

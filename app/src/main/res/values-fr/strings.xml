@@ -313,4 +313,15 @@
     <string name="recipe_palette_tone">Rendu tonal</string>
     <string name="settings_raw_max_quality_tuning">Réglage de la qualité HDR+</string>
     <string name="settings_raw_max_quality_tuning_description">Adapte l’estimation du bruit de fusion et la réduction du bruit à la taille physique du capteur. Si désactivé, les paramètres par défaut sont utilisés.</string>
+    <string name="settings_shutter_sound_single">Son prise unique</string>
+    <string name="settings_shutter_sound_burst">Son rafale</string>
+    <string name="settings_shutter_sound_custom_description">Importez un clip audio de 3 secondes maximum, en 48 kHz, mono ou stéréo. Le son de rafale se répète pendant la prise de vue.</string>
+    <string name="settings_shutter_sound_default">Par défaut</string>
+    <string name="settings_shutter_sound_choose">Choisir un audio</string>
+    <string name="settings_shutter_sound_preview">Aperçu</string>
+    <string name="settings_shutter_sound_reset">Rétablir la valeur par défaut</string>
+    <string name="settings_shutter_sound_importing">Importation de l’audio…</string>
+    <string name="settings_shutter_sound_import_failed">Impossible d’importer cet audio. Choisissez un clip lisible de 3 secondes maximum, en 48 kHz, mono ou stéréo (10 Mo maximum).</string>
+    <string name="settings_shutter_sound_save_failed">Impossible d’enregistrer les réglages du son. Veuillez réessayer.</string>
+    <string name="settings_shutter_sound_preview_failed">Impossible de lire ce son. Veuillez le réimporter ou rétablir la valeur par défaut.</string>
 </resources>

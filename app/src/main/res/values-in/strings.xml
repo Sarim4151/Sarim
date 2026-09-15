@@ -313,4 +313,15 @@
     <string name="recipe_palette_tone">Tonalitas</string>
     <string name="settings_raw_max_quality_tuning">Penyetelan kualitas gambar HDR+</string>
     <string name="settings_raw_max_quality_tuning_description">Sesuaikan estimasi derau penggabungan dan pengurangan derau dengan ukuran fisik sensor. Saat nonaktif, gunakan parameter gambar bawaan.</string>
+    <string name="settings_shutter_sound_single">Suara satu bidikan</string>
+    <string name="settings_shutter_sound_burst">Suara beruntun</string>
+    <string name="settings_shutter_sound_custom_description">Impor klip audio hingga 3 detik, 48 kHz, mono atau stereo. Audio beruntun akan diulang selama pemotretan.</string>
+    <string name="settings_shutter_sound_default">Default</string>
+    <string name="settings_shutter_sound_choose">Pilih audio</string>
+    <string name="settings_shutter_sound_preview">Pratinjau</string>
+    <string name="settings_shutter_sound_reset">Pulihkan default</string>
+    <string name="settings_shutter_sound_importing">Mengimpor audio…</string>
+    <string name="settings_shutter_sound_import_failed">Audio ini tidak dapat diimpor. Pilih klip yang dapat diputar hingga 3 detik, 48 kHz, mono atau stereo (maksimal 10 MB).</string>
+    <string name="settings_shutter_sound_save_failed">Setelan suara tidak dapat disimpan. Silakan coba lagi.</string>
+    <string name="settings_shutter_sound_preview_failed">Suara ini tidak dapat diputar. Silakan impor ulang atau pulihkan default.</string>
 </resources>

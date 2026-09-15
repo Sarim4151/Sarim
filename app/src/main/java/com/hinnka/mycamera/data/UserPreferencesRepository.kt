@@ -157,6 +157,8 @@ data class UserPreferences(
     val focusPeakingEnabled: Boolean = true,  // 手动对焦峰值显示
     val eyeFocusEnabled: Boolean = false,  // MediaPipe 人眼对焦
     val shutterSoundEnabled: Boolean = true,  // 快门声音
+    val shutterSoundFileName: String? = null,
+    val burstSoundFileName: String? = null,
     val vibrationEnabled: Boolean = true,  // 拍摄震动
     val keepScreenOn: Boolean = false,  // 屏幕常亮
     val windowScreenBrightness: Float? = null,  // Activity 窗口屏幕亮度，null 表示使用系统默认
@@ -405,6 +407,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val FOCUS_PEAKING_ENABLED = booleanPreferencesKey("focus_peaking_enabled")
         private val EYE_FOCUS_ENABLED = booleanPreferencesKey("eye_focus_enabled")
         private val SHUTTER_SOUND_ENABLED = booleanPreferencesKey("shutter_sound_enabled")
+        private val SHUTTER_SOUND_FILE_NAME = stringPreferencesKey("shutter_sound_file_name")
+        private val BURST_SOUND_FILE_NAME = stringPreferencesKey("burst_sound_file_name")
         private val VIBRATION_ENABLED = booleanPreferencesKey("vibration_enabled")
         private val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         private val WINDOW_SCREEN_BRIGHTNESS = floatPreferencesKey("window_screen_brightness")
@@ -686,6 +690,8 @@ class UserPreferencesRepository(private val context: Context) {
                 focusPeakingEnabled = preferences[FOCUS_PEAKING_ENABLED] ?: true,
                 eyeFocusEnabled = preferences[EYE_FOCUS_ENABLED] ?: false,
                 shutterSoundEnabled = preferences[SHUTTER_SOUND_ENABLED] ?: true,
+                shutterSoundFileName = preferences[SHUTTER_SOUND_FILE_NAME],
+                burstSoundFileName = preferences[BURST_SOUND_FILE_NAME],
                 vibrationEnabled = preferences[VIBRATION_ENABLED] ?: true,
                 keepScreenOn = preferences[KEEP_SCREEN_ON] ?: false,
                 windowScreenBrightness = preferences[WINDOW_SCREEN_BRIGHTNESS]?.coerceIn(0f, 1f),
@@ -1514,6 +1520,13 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveShutterSoundEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[SHUTTER_SOUND_ENABLED] = enabled
+        }
+    }
+
+    suspend fun saveCaptureSound(isBurst: Boolean, fileName: String?) {
+        context.dataStore.edit { preferences ->
+            val key = if (isBurst) BURST_SOUND_FILE_NAME else SHUTTER_SOUND_FILE_NAME
+            if (fileName == null) preferences.remove(key) else preferences[key] = fileName
         }
     }
 

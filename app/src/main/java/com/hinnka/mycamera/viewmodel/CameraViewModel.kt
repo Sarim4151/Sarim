@@ -24,6 +24,8 @@ import com.hinnka.mycamera.camera.*
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.data.CameraFeaturePreferencesUpdate
 import com.hinnka.mycamera.data.CaptureButtonStyle
+import com.hinnka.mycamera.data.CaptureSoundRepository
+import com.hinnka.mycamera.R
 import com.hinnka.mycamera.data.DevelopAnimationStyle
 import com.hinnka.mycamera.frame.FrameRenderer
 import com.hinnka.mycamera.data.PreferenceUpdateValue
@@ -555,6 +557,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     // 快门音效播放器
     private val shutterSoundPlayer = ShutterSoundPlayer(application)
+    private val captureSoundRepository = CaptureSoundRepository(application, userPreferencesRepository)
+    private val _captureSoundImporting = MutableStateFlow(false)
+    val captureSoundImporting = _captureSoundImporting.asStateFlow()
+    private val _captureSoundErrors = MutableSharedFlow<Int>(extraBufferCapacity = 1)
+    val captureSoundErrors = _captureSoundErrors.asSharedFlow()
 
     // 震动辅助类
     private val vibrationHelper = VibrationHelper(application)
@@ -2090,6 +2097,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
                 isShutterSoundEnabled = it.shutterSoundEnabled
+                if (!isShutterSoundEnabled) shutterSoundPlayer.stopBurst()
+                shutterSoundPlayer.configure(
+                    it.shutterSoundFileName,
+                    it.burstSoundFileName,
+                )
                 isVibrationEnabled = it.vibrationEnabled
                 // 同步降噪等级到相机控制器
                 val currentCameraState = cameraController.state.value
@@ -4971,6 +4983,35 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setShutterSoundEnabled(enabled: Boolean) {
         viewModelScope.launch {
             userPreferencesRepository.saveShutterSoundEnabled(enabled)
+        }
+    }
+
+    fun importCaptureSound(isBurst: Boolean, uri: Uri) {
+        updateCaptureSound(R.string.settings_shutter_sound_import_failed) {
+            captureSoundRepository.import(isBurst, uri)
+        }
+    }
+
+    fun resetCaptureSound(isBurst: Boolean) {
+        updateCaptureSound(R.string.settings_shutter_sound_save_failed) {
+            captureSoundRepository.reset(isBurst)
+        }
+    }
+
+    private fun updateCaptureSound(errorMessage: Int, operation: suspend () -> Unit) {
+        if (_captureSoundImporting.value) return
+        _captureSoundImporting.value = true
+        viewModelScope.launch {
+            try {
+                operation()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                PLog.e(TAG, "Cannot update capture sound", e)
+                _captureSoundErrors.emit(errorMessage)
+            } finally {
+                _captureSoundImporting.value = false
+            }
         }
     }
 

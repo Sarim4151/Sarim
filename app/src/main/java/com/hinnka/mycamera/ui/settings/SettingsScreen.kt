@@ -2590,6 +2590,8 @@ fun SettingsScreen(
                             onCheckedChange = { viewModel.setShutterSoundEnabled(it) }
                         )
 
+                        CaptureSoundSetting(viewModel)
+
                         HorizontalDivider(
                             color = Color.White.copy(alpha = 0.1f),
                             modifier = Modifier.padding(vertical = 8.dp)

@@ -1244,4 +1244,15 @@
     <string name="settings_color_palette_description">在编辑页显示调色盘，可同时调整影调和饱和度。</string>
     <string name="settings_raw_max_quality_tuning">HDR+ 画质调优</string>
     <string name="settings_raw_max_quality_tuning_description">按物理传感器尺寸调整融合噪声估计和降噪。关闭时使用默认成像参数。</string>
+    <string name="settings_shutter_sound_single">单拍声音</string>
+    <string name="settings_shutter_sound_burst">连拍声音</string>
+    <string name="settings_shutter_sound_custom_description">导入时长不超过 3 秒、48 kHz、单声道或立体声的音频片段。连拍音频会在拍摄过程中重复播放。</string>
+    <string name="settings_shutter_sound_default">默认</string>
+    <string name="settings_shutter_sound_choose">选择音频</string>
+    <string name="settings_shutter_sound_preview">预览</string>
+    <string name="settings_shutter_sound_reset">恢复默认</string>
+    <string name="settings_shutter_sound_importing">正在导入音频…</string>
+    <string name="settings_shutter_sound_import_failed">无法导入此音频。请选择可播放、时长不超过 3 秒、48 kHz、单声道或立体声的片段（最大 10 MB）。</string>
+    <string name="settings_shutter_sound_save_failed">无法保存声音设置，请重试。</string>
+    <string name="settings_shutter_sound_preview_failed">无法播放此声音。请重新导入，或恢复默认设置。</string>
 </resources>

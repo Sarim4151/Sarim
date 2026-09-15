@@ -1268,4 +1268,15 @@
     <string name="settings_color_palette_description">Show the color palette in the editor to adjust tonality and saturation together.</string>
     <string name="settings_raw_max_quality_tuning">HDR+ image quality tuning</string>
     <string name="settings_raw_max_quality_tuning_description">Adjust fusion noise estimates and denoising to the physical sensor size. When off, use default imaging parameters.</string>
+    <string name="settings_shutter_sound_single">Single-shot sound</string>
+    <string name="settings_shutter_sound_burst">Burst sound</string>
+    <string name="settings_shutter_sound_custom_description">Import an audio clip up to 3 seconds, 48 kHz, mono or stereo. Burst audio repeats while shooting.</string>
+    <string name="settings_shutter_sound_default">Default</string>
+    <string name="settings_shutter_sound_choose">Choose audio</string>
+    <string name="settings_shutter_sound_preview">Preview</string>
+    <string name="settings_shutter_sound_reset">Restore default</string>
+    <string name="settings_shutter_sound_importing">Importing audio…</string>
+    <string name="settings_shutter_sound_import_failed">Cannot import this audio. Choose a playable clip up to 3 seconds, 48 kHz, mono or stereo (10 MB maximum).</string>
+    <string name="settings_shutter_sound_save_failed">Cannot save sound settings. Please try again.</string>
+    <string name="settings_shutter_sound_preview_failed">Cannot play this sound. Please import it again or restore the default.</string>
 </resources>

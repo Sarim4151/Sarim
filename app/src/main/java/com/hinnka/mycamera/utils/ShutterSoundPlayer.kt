@@ -3,134 +3,133 @@ package com.hinnka.mycamera.utils
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
-import android.util.Log
-import java.io.IOException
+import com.hinnka.mycamera.data.CaptureSoundRepository
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 
-/**
- * 快门音效播放器
- * 
- * 负责播放拍照时的快门音效
- * 使用 SoundPool 实现低延迟播放
- */
+/** Preloads each sound independently for low-latency capture, including looping burst audio. */
 class ShutterSoundPlayer(private val context: Context) {
-    
     companion object {
         private const val TAG = "ShutterSoundPlayer"
-        private const val SHUTTER_SOUND_PATH = "shutter.mp3"
-        private const val BURST_SOUND_PATH = "burst.mp3"
-    }
-    
-    private var soundPool: SoundPool? = null
-    private var soundId: Int = -1
-    private var burstSoundId: Int = -1
-    private var burstStreamId: Int = -1
-    private var isLoaded = false
-    
-    init {
-        initializePlayer()
-    }
-    
-    /**
-     * 初始化 SoundPool
-     */
-    private fun initializePlayer() {
-        try {
-            val audioAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-                
-            soundPool = SoundPool.Builder()
-                .setMaxStreams(1)
-                .setAudioAttributes(audioAttributes)
-                .build()
-                
-            soundPool?.setOnLoadCompleteListener { _, _, status ->
-                if (status == 0) {
-                    isLoaded = true
-                    PLog.d(TAG, "Shutter sound loaded successfully")
-                } else {
-                    PLog.e(TAG, "Failed to load shutter sound, status: $status")
-                }
+
+        private fun createPool() = SoundPool.Builder()
+            .setMaxStreams(1)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .build()
+
+        /** Verify that the device can actually decode the imported file before saving it. */
+        suspend fun validate(file: File): Boolean {
+            val pool = createPool()
+            try {
+                val loaded = CompletableDeferred<Boolean>()
+                pool.setOnLoadCompleteListener { _, _, status -> loaded.complete(status == 0) }
+                if (pool.load(file.absolutePath, 1) == 0) return false
+                return withTimeoutOrNull(10_000) { loaded.await() } == true
+            } finally {
+                pool.release()
             }
-            
-            val afd = context.assets.openFd(SHUTTER_SOUND_PATH)
-            val burstAfd = context.assets.openFd(BURST_SOUND_PATH)
-            soundId = soundPool?.load(afd, 1) ?: -1
-            burstSoundId = soundPool?.load(burstAfd, 1) ?: -1
-            afd.close()
-            
-            PLog.d(TAG, "Shutter sound player initialized with SoundPool")
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to initialize shutter sound player", e)
-            isLoaded = false
         }
     }
-    
-    /**
-     * 播放快门音效
-     */
+
+    private class Sample(val fileName: String?, val id: Int) {
+        val loaded = CompletableDeferred<Boolean>()
+        var ready = false
+    }
+
+    private var single: Sample? = null
+    private var burst: Sample? = null
+    private var streamId = 0
+    private var pool: SoundPool? = createPool().apply {
+        setOnLoadCompleteListener { _, sampleId, status ->
+            synchronized(this@ShutterSoundPlayer) {
+                val sample = listOfNotNull(single, burst).firstOrNull { it.id == sampleId }
+                    ?: return@setOnLoadCompleteListener
+                sample.ready = status == 0
+                sample.loaded.complete(sample.ready)
+                if (!sample.ready) PLog.e(TAG, "Sound load failed: id=$sampleId, status=$status")
+            }
+        }
+    }
+
+    @Synchronized
+    fun configure(singleFileName: String?, burstFileName: String?) {
+        val activePool = pool ?: return
+        if (single == null || single?.fileName != singleFileName) {
+            single = replace(activePool, single, singleFileName, "shutter.mp3")
+        }
+        if (burst == null || burst?.fileName != burstFileName) {
+            stopBurst()
+            burst = replace(activePool, burst, burstFileName, "burst.mp3")
+        }
+    }
+
+    private fun replace(activePool: SoundPool, previous: Sample?, fileName: String?, asset: String): Sample {
+        previous?.let {
+            it.loaded.complete(false)
+            activePool.unload(it.id)
+        }
+        val id = try {
+            val file = CaptureSoundRepository.resolve(context, fileName)
+            if (file == null) {
+                context.assets.openFd(asset).use { activePool.load(it, 1) }
+            } else {
+                activePool.load(file.absolutePath, 1)
+            }
+        } catch (e: Exception) {
+            PLog.e(TAG, "Cannot load sound: ${fileName ?: asset}", e)
+            0
+        }
+        return Sample(fileName, id).also { if (id == 0) it.loaded.complete(false) }
+    }
+
+    @Synchronized
     fun play() {
-        if (soundPool == null || soundId == -1 || !isLoaded) {
-            PLog.w(TAG, "SoundPool not ready: soundPool=$soundPool, soundId=$soundId, isLoaded=$isLoaded")
-            // 如果是因为未初始化或加载失败，尝试重新初始化
-            if (soundPool == null) {
-                initializePlayer()
-            }
-            return
-        }
-        
-        try {
-            // 播放音效：左声道音量, 右声道音量, 优先级, 循环次数(0不循环), 播放速率(1.0正常)
-            soundPool?.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to play shutter sound", e)
-        }
+        playSample(single, loop = false)
     }
 
-    /**
-     * 播放连拍快门音效
-     */
+    @Synchronized
     fun playBurst() {
-        if (soundPool == null || burstSoundId == -1 || !isLoaded) {
-            PLog.w(TAG, "SoundPool not ready: soundPool=$soundPool, burstSoundId=$soundId, isLoaded=$isLoaded")
-            // 如果是因为未初始化或加载失败，尝试重新初始化
-            if (soundPool == null) {
-                initializePlayer()
-            }
-            return
-        }
+        stopBurst()
+        playSample(burst, loop = true)
+    }
 
-        try {
-            // 播放音效：左声道音量, 右声道音量, 优先级, 循环次数(循环), 播放速率(1.0正常)
-            burstStreamId = soundPool?.play(burstSoundId, 1.0f, 1.0f, 1, -1, 1.0f) ?: -1
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to play shutter sound", e)
+    private fun playSample(sample: Sample?, loop: Boolean): Boolean {
+        val activePool = pool ?: return false
+        if (sample?.ready != true) return false
+        streamId = activePool.play(sample.id, 1f, 1f, 1, if (loop) -1 else 0, 1f)
+        return streamId != 0
+    }
+
+    /** A preview plays exactly once, even for the burst sound. */
+    suspend fun preview(isBurst: Boolean): Boolean {
+        val sample = synchronized(this) { if (isBurst) burst else single } ?: return false
+        if (withTimeoutOrNull(10_000) { sample.loaded.await() } != true) return false
+        return synchronized(this) {
+            if (sample !== (if (isBurst) burst else single)) false
+            else playSample(sample, loop = false)
         }
     }
 
+    @Synchronized
     fun stopBurst() {
-        if (soundPool == null || burstStreamId == -1) return
-        try {
-            soundPool?.stop(burstStreamId)
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to stop shutter sound", e)
-        }
+        if (streamId != 0) pool?.stop(streamId)
+        streamId = 0
     }
-    
-    /**
-     * 释放资源
-     */
+
+    @Synchronized
     fun release() {
-        try {
-            soundPool?.release()
-            soundPool = null
-            soundId = -1
-            burstSoundId = -1
-            isLoaded = false
-            PLog.d(TAG, "Shutter sound player released")
-        } catch (e: Exception) {
-            PLog.e(TAG, "Failed to release shutter sound player", e)
-        }
+        single?.loaded?.complete(false)
+        burst?.loaded?.complete(false)
+        pool?.release()
+        pool = null
+        single = null
+        burst = null
+        streamId = 0
     }
 }

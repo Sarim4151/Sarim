@@ -37,7 +37,8 @@ object BackupManager {
         "custom_dcps",
         "custom_raw_noise_profiles",
         "custom_fonts",
-        "custom_logos"
+        "custom_logos",
+        "capture_sounds"
     )
 
     // These imported profiles describe a particular camera sensor and must stay with its device.
