@@ -48,7 +48,7 @@ internal fun resolveFusionReferenceSignal(
  * executes MGC 9.7.047 V25's complete native-grid MergeRgbRaw16F16 AOT, including its internal
  * full-resolution green reconstruction. Sabre likewise completes fusion, ResolveSabre and VGN on
  * the native grid. Requested larger RGB outputs are export-size transforms produced from those
- * completed camera-RGB results with the DNG bicubic resampling kernel; they are not sensor-detail
+ * completed camera-RGB results with the Lanczos-3 resampling kernel; they are not sensor-detail
  * super-resolution. MGC alignment, rejection, Bento admission and propagated-noise postprocessing
  * remain authoritative.
  */
@@ -2477,7 +2477,7 @@ internal class GlesMgcRawSpatialStacker(
                 resampleOutput -> {
                     {
                         GlesGpuCompletion.awaitSubmittedWork(
-                            label = "MGC Sabre VGN-to-bicubic handoff",
+                            label = "MGC Sabre VGN-to-Lanczos handoff",
                             checkGlError = ::checkGlError,
                         )
                         Unit
@@ -2497,7 +2497,7 @@ internal class GlesMgcRawSpatialStacker(
                 }
                 if (exportGpuLinearRgbSource) {
                     GlesGpuCompletion.awaitSubmittedWork(
-                        label = "MGC Sabre VGN-to-bicubic handoff",
+                        label = "MGC Sabre VGN-to-Lanczos handoff",
                         checkGlError = ::checkGlError,
                     )
                 }
@@ -3057,7 +3057,7 @@ internal class GlesMgcRawSpatialStacker(
 
     private fun renderSabreResampledOutput(source: Int, target: Int) {
         check(sabreResampleOutputProgram != 0) {
-            "MGC Sabre bicubic output program is not initialized"
+            "MGC Sabre Lanczos output program is not initialized"
         }
         GLES30.glUseProgram(sabreResampleOutputProgram)
         bindTexture(sabreResampleOutputProgram, "uSource", 0, source)
@@ -3096,10 +3096,10 @@ internal class GlesMgcRawSpatialStacker(
         }
         try {
             GlesGpuCompletion.awaitSubmittedWork(
-                label = "MGC Sabre bicubic RGB16 readback",
+                label = "MGC Sabre Lanczos RGB16 readback",
                 checkGlError = ::checkGlError,
             )
-            bindRenderTargets(intArrayOf(texture), "MGC Sabre bicubic RGB16 readback")
+            bindRenderTargets(intArrayOf(texture), "MGC Sabre Lanczos RGB16 readback")
             GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
             GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 8)
             GLES30.glReadPixels(
@@ -3112,7 +3112,7 @@ internal class GlesMgcRawSpatialStacker(
                 scratch,
             )
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
-            checkGlError("MGC Sabre bicubic RGBA16 readback")
+            checkGlError("MGC Sabre Lanczos RGBA16 readback")
             scratch.rewind()
             check(
                 DirectBufferPixelPacker.unpackRgba16TileToRgb16(
@@ -3125,7 +3125,7 @@ internal class GlesMgcRawSpatialStacker(
                     destinationLeft = 0,
                     destinationTop = 0,
                 ),
-            ) { "Unable to pack MGC Sabre bicubic RGB16 output" }
+            ) { "Unable to pack MGC Sabre Lanczos RGB16 output" }
             output.rewind()
             return output
         } catch (throwable: Throwable) {
@@ -3310,8 +3310,8 @@ internal class GlesMgcRawSpatialStacker(
         )
         if (outputWidth != width || outputHeight != height) {
             sabreResampleOutputProgram = linkProgram(
-                GlesMgcRawSabreShaders.resampleOutputBicubic,
-                "mgc_sabre_output_bicubic",
+                GlesMgcRawSabreShaders.resampleOutputLanczos,
+                "mgc_sabre_output_lanczos",
             )
         }
         if (outputWidth != width || outputHeight != height ||
@@ -3323,7 +3323,7 @@ internal class GlesMgcRawSpatialStacker(
             )
         }
         // ResolveSabre and VGN stay on the native grid. A requested larger output is a separate
-        // bicubic export transform after VGN, so it cannot be mistaken for sensor-detail SR.
+        // Lanczos export transform after VGN, so it cannot be mistaken for sensor-detail SR.
         rgbChromaPostprocessor = createRgbChromaPostprocessor(
             imageWidth = width,
             imageHeight = height,
@@ -8262,7 +8262,7 @@ internal class GlesMgcRawSpatialStacker(
 
     /**
      * Streams one native-grid planar F16 channel at a time into the requested RGBA16UI grid. A
-     * separable DNG bicubic pass performs scaling before lens shading and the chroma stage, while
+     * separable Lanczos-3 pass performs scaling before lens shading and the chroma stage, while
      * keeping only one upload plane and one horizontal R16F intermediate live.
      */
     private fun uploadAndNormalizeOriginalAotRgb(

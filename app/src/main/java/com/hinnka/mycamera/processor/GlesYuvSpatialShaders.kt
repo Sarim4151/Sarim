@@ -283,156 +283,55 @@ internal object GlesYuvSpatialShaders {
         }
     """.trimIndent()
 
-    /** Spatial RBF merge evaluated on the requested output grid. */
-    val superResolutionMerge = """
-        #version 300 es
-        precision highp float;
-        precision highp int;
-        uniform sampler2D uCurrentY;
-        uniform sampler2D uCurrentCbCr;
-        uniform sampler2D uAlignment;
-        uniform sampler2D uFrameWeight;
-        uniform ivec2 uInputSize;
-        uniform ivec2 uOutputSize;
-        uniform float uExposureScale;
-        uniform float uGlobalFrameWeight;
-        uniform float uKernelSigma;
-        uniform int uUseFrameWeight;
-        uniform vec3 uTransformX;
-        uniform vec3 uTransformY;
-        out vec4 oYccAndWeight;
-
-        vec2 referencePixel(ivec2 p) {
-            return vec2(
-                float(p.x) * uTransformX.x + float(p.y) * uTransformX.y + uTransformX.z,
-                float(p.x) * uTransformY.x + float(p.y) * uTransformY.y + uTransformY.z
-            );
+    /** Normalize native-grid samples before interpolation: merge confidence is not image alpha. */
+    val lanczosOutput = buildLanczosOutput("""
+        vec3 lanczosSource(ivec2 p) {
+            vec4 a = texelFetch(uAccumulator, clamp(p, ivec2(0), uInputSize - 1), 0);
+            return a.a > 1.0e-4 ? clamp(a.rgb / a.a, 0.0, 1.0) : vec3(0.0, 0.5, 0.5);
         }
+    """.trimIndent())
 
-        int mirrorCoordinate(int coordinate, int extent) {
-            if (extent <= 1) return 0;
-            if (coordinate < 0) coordinate = -coordinate - 1;
-            if (coordinate >= extent) coordinate = 2 * extent - coordinate - 1;
-            return clamp(coordinate, 0, extent - 1);
-        }
-
-        ivec2 mirrorPixel(ivec2 p) {
-            return ivec2(
-                mirrorCoordinate(p.x, uInputSize.x),
-                mirrorCoordinate(p.y, uInputSize.y)
-            );
-        }
-
-        vec3 yccAt(ivec2 p) {
-            p = mirrorPixel(p);
-            float y = clamp(texelFetch(uCurrentY, p, 0).r * uExposureScale, 0.0, 1.0);
-            ivec2 chromaSize = (uInputSize + ivec2(1)) / 2;
-            vec2 cbcr = texelFetch(
-                uCurrentCbCr,
-                clamp(p / 2, ivec2(0), chromaSize - ivec2(1)),
-                0
-            ).rg;
-            cbcr = clamp(
-                vec2(0.5) + (cbcr - vec2(0.5)) * uExposureScale,
-                vec2(0.0),
-                vec2(1.0)
-            );
+    val lanczosFrameOutput = buildLanczosOutput("""
+        vec3 lanczosSource(ivec2 p) {
+            p = clamp(p, ivec2(0), uInputSize - 1);
+            float y = texelFetch(uCurrentY, p, 0).r;
+            vec2 cbcr = texelFetch(uCurrentCbCr, p / 2, 0).rg;
             return vec3(y, cbcr);
         }
+    """.trimIndent())
 
-        void main() {
-            ivec2 outputPixel = ivec2(gl_FragCoord.xy);
-            vec2 reference = referencePixel(outputPixel);
-            // Upsampled pixel centers cover the outer half of the edge texels too.
-            // Keep their subpixel phase; yccAt supplies mirrored boundary samples.
-            if (any(lessThan(reference, vec2(-0.5))) ||
-                any(greaterThan(reference, vec2(uInputSize) - vec2(0.5)))) {
-                oYccAndWeight = vec4(0.0);
-                return;
-            }
-            ivec2 alignmentSize = max(textureSize(uAlignment, 0), ivec2(1));
-            ivec2 tile = clamp(ivec2(floor(reference)) / 16, ivec2(0), alignmentSize - ivec2(1));
-            vec2 flow = texelFetch(uAlignment, tile, 0).xy * 2.0;
-            vec2 source = reference + flow;
-            ivec2 anchor = ivec2(roundEven(source));
-            vec2 subpixelOffset = vec2(anchor) - source;
-            vec3 value = vec3(0.0);
-            float kernelWeightSum = 0.0;
-            float sigmaSquared = uKernelSigma * uKernelSigma;
-            for (int y = -1; y <= 1; ++y) {
-                for (int x = -1; x <= 1; ++x) {
-                    vec2 sampleOffset = subpixelOffset + vec2(x, y);
-                    if (any(greaterThan(abs(sampleOffset), vec2(1.5)))) continue;
-                    float kernelWeight = exp(
-                        -0.5 * dot(sampleOffset * sampleOffset, vec2(sigmaSquared))
-                    );
-                    value += yccAt(anchor + ivec2(x, y)) * kernelWeight;
-                    kernelWeightSum += kernelWeight;
-                }
-            }
-            vec2 weightUv = (reference + vec2(0.5)) / vec2(uInputSize);
-            float frameWeight = uUseFrameWeight != 0
-                ? texture(uFrameWeight, clamp(weightUv, vec2(0.0), vec2(1.0))).r
-                : 1.0;
-            frameWeight = clamp(frameWeight, 0.0, 1.0) * uGlobalFrameWeight;
-            oYccAndWeight = vec4(value * frameWeight, kernelWeightSum * frameWeight);
-        }
-    """.trimIndent()
-
-    val superResolutionNormalize = """
+    private fun buildLanczosOutput(source: String) = """
         #version 300 es
         precision highp float;
         precision highp int;
-        uniform sampler2D uSrAccumulator;
-        uniform sampler2D uBaseAccumulator;
+        precision highp sampler2D;
+        uniform sampler2D uAccumulator;
+        uniform sampler2D uCurrentY;
+        uniform sampler2D uCurrentCbCr;
         uniform ivec2 uInputSize;
         uniform vec3 uTransformX;
         uniform vec3 uTransformY;
         uniform int uIsP010;
         out vec4 oColor;
 
-        vec2 referencePixel(ivec2 p) {
-            return vec2(
-                float(p.x) * uTransformX.x + float(p.y) * uTransformX.y + uTransformX.z,
-                float(p.x) * uTransformY.x + float(p.y) * uTransformY.y + uTransformY.z
-            );
-        }
-
-        vec3 normalizedYcc(vec4 value) {
-            return value.a > 1.0e-8
-                ? clamp(value.rgb / value.a, vec3(0.0), vec3(1.0))
-                : vec3(0.0, 0.5, 0.5);
-        }
-
-        vec3 baseYcc(vec2 pixel) {
-            vec2 uv = (pixel + vec2(0.5)) / vec2(uInputSize);
-            return normalizedYcc(texture(uBaseAccumulator, clamp(uv, vec2(0.0), vec2(1.0))));
-        }
-
-        vec3 yccToRgb(vec3 ycc) {
-            float cb = ycc.y - 0.5;
-            float cr = ycc.z - 0.5;
-            if (uIsP010 != 0) {
-                return vec3(
-                    ycc.x + 1.4746 * cr,
-                    ycc.x - 0.16455 * cb - 0.57135 * cr,
-                    ycc.x + 1.8814 * cb
-                );
-            }
-            return vec3(
-                ycc.x + 1.402 * cr,
-                ycc.x - 0.344136 * cb - 0.714136 * cr,
-                ycc.x + 1.772 * cb
-            );
-        }
+        ${source.prependIndent("        ")}
+        ${GlesLanczosResampling.sampleRgb.prependIndent("        ")}
 
         void main() {
-            ivec2 p = ivec2(gl_FragCoord.xy);
-            vec4 accumulated = texelFetch(uSrAccumulator, p, 0);
-            vec3 ycc = accumulated.a > 1.0e-8
-                ? normalizedYcc(accumulated)
-                : baseYcc(referencePixel(p));
-            oColor = vec4(clamp(yccToRgb(ycc), vec3(0.0), vec3(1.0)), 1.0);
+            vec2 p = gl_FragCoord.xy - vec2(0.5);
+            vec2 sourcePosition = vec2(dot(vec3(p, 1.0), uTransformX),
+                                       dot(vec3(p, 1.0), uTransformY));
+            vec3 ycc = sampleLanczosRgb(sourcePosition);
+            float cb = ycc.y - 0.5;
+            float cr = ycc.z - 0.5;
+            vec3 rgb = uIsP010 != 0
+                ? vec3(ycc.x + 1.4746 * cr,
+                       ycc.x - 0.16455 * cb - 0.57135 * cr,
+                       ycc.x + 1.8814 * cb)
+                : vec3(ycc.x + 1.402 * cr,
+                       ycc.x - 0.344136 * cb - 0.714136 * cr,
+                       ycc.x + 1.772 * cb);
+            oColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
         }
     """.trimIndent()
 }

@@ -1393,7 +1393,7 @@ internal object GlesMgcRawSpatialShaders {
         }
     """.trimIndent()
 
-    /** Horizontal half of the DNG SDK's A=-0.75 bicubic output-grid resampler. */
+    /** Horizontal half of the Lanczos-3 output-grid resampler. */
     val resampleAotRgbHorizontal = """
         #version 300 es
         precision highp float;
@@ -1404,25 +1404,18 @@ internal object GlesMgcRawSpatialShaders {
         uniform int uOutputWidth;
         out float oChannel;
 
-        float bicubicWeight(float x) {
-            const float A = -0.75;
-            x = abs(x);
-            if (x >= 2.0) return 0.0;
-            if (x >= 1.0) return ((A * x - 5.0 * A) * x + 8.0 * A) * x - 4.0 * A;
-            return ((A + 2.0) * x - (A + 3.0)) * x * x + 1.0;
-        }
+        ${GlesLanczosResampling.kernel.prependIndent("        ")}
 
         void main() {
             ivec2 outputPixel = ivec2(gl_FragCoord.xy);
             float sourceX = (float(outputPixel.x) + 0.5) *
                 float(uSourceSize.x) / float(uOutputWidth) - 0.5;
-            sourceX = round(sourceX * 128.0) * (1.0 / 128.0);
             int baseX = int(floor(sourceX));
             float fraction = sourceX - float(baseX);
             float total = 0.0;
             float totalWeight = 0.0;
-            for (int x = -1; x <= 2; ++x) {
-                float weight = bicubicWeight(float(x) - fraction);
+            for (int x = -2; x <= 3; ++x) {
+                float weight = lanczosWeight(float(x) - fraction);
                 int sampleX = clamp(baseX + x, 0, uSourceSize.x - 1);
                 total += texelFetch(
                     uChannelPlane,
@@ -1439,7 +1432,7 @@ internal object GlesMgcRawSpatialShaders {
      * Converts the original MGC MergeRgbRaw16F16 planar Q14 output to the stacker's RGB16
      * boundary. The AOT output is already un-white-balanced camera RGB; WB is used only by the
      * AOT's internal green guide and must not be divided out again here. When the requested output
-     * is larger than the native AOT grid, this pass applies the vertical half of the DNG bicubic
+     * is larger than the native AOT grid, this pass applies the vertical half of the Lanczos-3
      * resampler after [resampleAotRgbHorizontal].
      */
     val normalizeAotRgb16 = """
@@ -1457,13 +1450,7 @@ internal object GlesMgcRawSpatialShaders {
         uniform int uChannel;
         layout(location = 0) out highp uvec4 oRgb16;
 
-        float bicubicWeight(float x) {
-            const float A = -0.75;
-            x = abs(x);
-            if (x >= 2.0) return 0.0;
-            if (x >= 1.0) return ((A * x - 5.0 * A) * x + 8.0 * A) * x - 4.0 * A;
-            return ((A + 2.0) * x - (A + 3.0)) * x * x + 1.0;
-        }
+        ${GlesLanczosResampling.kernel.prependIndent("        ")}
 
         float sampleChannel(ivec2 outputPixel) {
             if (uResampleVertical == 0) {
@@ -1471,13 +1458,12 @@ internal object GlesMgcRawSpatialShaders {
             }
             float sourceY = (float(outputPixel.y) + 0.5) *
                 float(uSourceSize.y) / float(uOutputSize.y) - 0.5;
-            sourceY = round(sourceY * 128.0) * (1.0 / 128.0);
             int baseY = int(floor(sourceY));
             float fraction = sourceY - float(baseY);
             float total = 0.0;
             float totalWeight = 0.0;
-            for (int y = -1; y <= 2; ++y) {
-                float weight = bicubicWeight(float(y) - fraction);
+            for (int y = -2; y <= 3; ++y) {
+                float weight = lanczosWeight(float(y) - fraction);
                 int sampleY = clamp(baseY + y, 0, uSourceSize.y - 1);
                 total += texelFetch(
                     uChannelPlane,

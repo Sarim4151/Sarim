@@ -166,8 +166,8 @@ class GlesYuvStacker(
     private var accumulateProgram = 0
     private var normalizeProgram = 0
     private var readbackResolveProgram = 0
-    private var superResolutionAccumulateProgram = 0
-    private var superResolutionNormalizeProgram = 0
+    private var lanczosOutputProgram = 0
+    private var lanczosFrameOutputProgram = 0
     private var alignedFrameOutputProgram = 0
     private var mertensWeightProgram = 0
     private var mertensNormalizeProgram = 0
@@ -218,8 +218,6 @@ class GlesYuvStacker(
     private var frameWeightTexture = 0
     private var accumulatorTexture = 0
     private var currentAccumulatorTexture = 0
-    private var superResolutionAccumulatorTexture = 0
-    private var currentSuperResolutionAccumulatorTexture = 0
     private var hdrZeroTexture = 0
     private var hdrHighTexture = 0
     private var hdrLowTexture = 0
@@ -255,8 +253,8 @@ class GlesYuvStacker(
     private val gpuOutputWidth = if (cpuRotateReadback) renderOutputHeight else renderOutputWidth
     private val gpuOutputHeight = if (cpuRotateReadback) renderOutputWidth else renderOutputHeight
     private val highPrecisionInput = inputFormat == ImageFormat.YCBCR_P010
-    private val superResolutionScale = MultiFrameConfig.normalizeOutputScale(outputScale)
-    private val superResolutionEnabled = superResolutionScale > MultiFrameConfig.MIN_OUTPUT_SCALE
+    private val outputScaleFactor = MultiFrameConfig.normalizeOutputScale(outputScale)
+    private val outputUpscaleEnabled = outputScaleFactor > MultiFrameConfig.MIN_OUTPUT_SCALE
     private val lumaInternalFormat = if (highPrecisionInput) GLES30.GL_R16F else GLES30.GL_R8
     private val chromaInternalFormat = if (highPrecisionInput) GLES30.GL_RG16F else GLES30.GL_RG8
     private val chromaWidth = (width + 1) / 2
@@ -279,7 +277,7 @@ class GlesYuvStacker(
             return null
         }
 
-        timing.start("mode=YUV input=${width}x$height output=${gpuOutputWidth}x$gpuOutputHeight frames=${images.size} format=${formatName(inputFormat)} sr=$superResolutionEnabled alignment=rg16f-sparse2 inputPreference=hardwarebuffer fallbackUpload=ring2")
+        timing.start("mode=YUV input=${width}x$height output=${gpuOutputWidth}x$gpuOutputHeight frames=${images.size} format=${formatName(inputFormat)} lanczos=$outputUpscaleEnabled alignment=rg16f-sparse2 inputPreference=hardwarebuffer fallbackUpload=ring2")
         var succeeded = false
         val startTime = System.currentTimeMillis()
         val originalThreadPriority = GlesGpuScheduler.lowerCurrentThreadPriority(TAG)
@@ -294,7 +292,7 @@ class GlesYuvStacker(
                 "GLES stack format=${formatName(inputFormat)} " +
                     "internal=${if (highPrecisionInput) "R16F/RG16F" else "R8/RG8"} " +
                     "spatialGuide=${guideWidth}x$guideHeight flowGrid=${gridWidth}x${gridHeight} " +
-                    "sr=${superResolutionEnabled} srScale=${superResolutionScale.formatScale()}"
+                    "lanczos=${outputUpscaleEnabled} outputScale=${outputScaleFactor.formatScale()}"
             }
 
             timing.frame("0:reference")
@@ -308,15 +306,6 @@ class GlesYuvStacker(
             val referenceAlignmentProducts = buildReferenceAlignmentProducts(refPyramid)
             clearAccumulator()
             accumulateFrame(refY, refCbCr, isReference = true, currentToReferenceScale = 1.0f)
-            if (superResolutionEnabled) {
-                clearSuperResolutionAccumulator()
-                accumulateSuperResolutionFrame(
-                    refY,
-                    refCbCr,
-                    isReference = true,
-                    currentToReferenceScale = 1.0f,
-                )
-            }
             timing.cpu("scheduler.yield") { GlesGpuScheduler.yieldToUiRenderer() }
 
             for (index in 1 until images.size) {
@@ -332,23 +321,11 @@ class GlesYuvStacker(
                     currentToReferenceScale = 1.0f,
                 )
                 accumulateFrame(curY, curCbCr, isReference = false, currentToReferenceScale = 1.0f)
-                if (superResolutionEnabled) {
-                    accumulateSuperResolutionFrame(
-                        curY,
-                        curCbCr,
-                        isReference = false,
-                        currentToReferenceScale = 1.0f,
-                    )
-                }
                 timing.cpu("scheduler.yield") { GlesGpuScheduler.yieldToUiRenderer() }
             }
 
             timing.frame("output")
-            if (superResolutionEnabled) {
-                normalizeSuperResolutionOutput()
-            } else {
-                normalizeOutput()
-            }
+            normalizeOutput()
             timing.cpu("scheduler.yield") { GlesGpuScheduler.yieldToUiRenderer() }
             val bitmap = readOutputBitmap() ?: return null
             RawStackRuntimeDebug.i(TAG) {
@@ -680,16 +657,9 @@ class GlesYuvStacker(
         )
         normalizeProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, NORMALIZE_FRAGMENT_SHADER, "normalize")
         readbackResolveProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, READBACK_RESOLVE_FRAGMENT_SHADER, "readback_resolve")
-        if (superResolutionEnabled) {
-            superResolutionAccumulateProgram = linkGraphicsProgram(
-                FULLSCREEN_VERTEX_SHADER,
-                GlesYuvSpatialShaders.superResolutionMerge,
-                "yuv_spatial_super_resolution_merge",
-            )
-            superResolutionNormalizeProgram = linkGraphicsProgram(
-                FULLSCREEN_VERTEX_SHADER,
-                GlesYuvSpatialShaders.superResolutionNormalize,
-                "yuv_spatial_super_resolution_normalize",
+        if (outputUpscaleEnabled) {
+            lanczosOutputProgram = linkGraphicsProgram(
+                FULLSCREEN_VERTEX_SHADER, GlesYuvSpatialShaders.lanczosOutput, "yuv_output_lanczos",
             )
         }
         p010LumaProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, P010_LUMA_FRAGMENT_SHADER, "p010_luma")
@@ -710,15 +680,12 @@ class GlesYuvStacker(
                     "(gpu=${gpuOutputWidth}x$gpuOutputHeight) exceeds GL_MAX_TEXTURE_SIZE=$maxSize",
             )
         }
-        if (superResolutionEnabled && RawStackRuntimeDebug.enabled) {
-            val accumulatorBytes = gpuOutputWidth.toLong() * gpuOutputHeight.toLong() * 8L
-            val baseAccumulatorBytes = width.toLong() * height.toLong() * 8L
-            val outputBytes = renderOutputWidth.toLong() * renderOutputHeight.toLong() * 4L
+        if (outputUpscaleEnabled && RawStackRuntimeDebug.enabled) {
+            val accumulatorBytes = width.toLong() * height * 8L
+            val outputBytes = renderOutputWidth.toLong() * renderOutputHeight * 4L
             RawStackRuntimeDebug.d(TAG) {
-                "YUV MFSR resources out=${renderOutputWidth}x$renderOutputHeight maxTex=$maxSize " +
-                    "srAccumulator=${accumulatorBytes.mibString()}x2 " +
-                    "baseAccumulator=${baseAccumulatorBytes.mibString()}x2 " +
-                    "output=${outputBytes.mibString()}"
+                "YUV Lanczos-3 output=${renderOutputWidth}x$renderOutputHeight maxTex=$maxSize " +
+                    "nativeAccumulator=${accumulatorBytes.mibString()} output=${outputBytes.mibString()}"
             }
         }
     }
@@ -726,6 +693,11 @@ class GlesYuvStacker(
     private fun initHdrPrograms() {
         if (alignedFrameOutputProgram != 0) return
         alignedFrameOutputProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, ALIGNED_FRAME_OUTPUT_FRAGMENT_SHADER, "aligned_frame_output")
+        if (outputUpscaleEnabled) {
+            lanczosFrameOutputProgram = linkGraphicsProgram(
+                FULLSCREEN_VERTEX_SHADER, GlesYuvSpatialShaders.lanczosFrameOutput, "yuv_hdr_frame_lanczos",
+            )
+        }
         mertensWeightProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_WEIGHT_FRAGMENT_SHADER, "mertens_weight")
         mertensNormalizeProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_NORMALIZE_FRAGMENT_SHADER, "mertens_normalize")
         mertensPyrDownProgram = linkGraphicsProgram(FULLSCREEN_VERTEX_SHADER, MERTENS_PYR_DOWN_FRAGMENT_SHADER, "mertens_pyr_down")
@@ -783,10 +755,6 @@ class GlesYuvStacker(
         frameWeightTexture = createTexture2D(mergeWeightWidth, mergeWeightHeight, GLES30.GL_R8, GLES30.GL_LINEAR)
         accumulatorTexture = createTexture2D(width, height, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
         currentAccumulatorTexture = accumulatorTexture
-        if (superResolutionEnabled) {
-            superResolutionAccumulatorTexture = createTexture2D(gpuOutputWidth, gpuOutputHeight, GLES30.GL_RGBA16F, GLES30.GL_NEAREST)
-            currentSuperResolutionAccumulatorTexture = superResolutionAccumulatorTexture
-        }
         outputTexture = createTexture2D(gpuOutputWidth, gpuOutputHeight, GLES30.GL_RGBA8, GLES30.GL_NEAREST)
         if (cpuRotateReadback) {
             readbackTexture = createTexture2D(renderOutputWidth, renderOutputHeight, GLES30.GL_RGBA8, GLES30.GL_NEAREST)
@@ -2068,113 +2036,8 @@ class GlesYuvStacker(
         currentAccumulatorTexture = accumulatorTexture
     }
 
-    private fun clearSuperResolutionAccumulator() {
-        bindFramebufferOutput(superResolutionAccumulatorTexture, "clearSuperResolutionAccumulator")
-        GLES30.glViewport(0, 0, gpuOutputWidth, gpuOutputHeight)
-        GLES30.glClearColor(0f, 0f, 0f, 0f)
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-        finishFramebufferPass("clearSuperResolutionAccumulator")
-        currentSuperResolutionAccumulatorTexture = superResolutionAccumulatorTexture
-    }
-
-    private fun accumulateSuperResolutionFrame(
-        yTexture: Int,
-        cbCrTexture: Int,
-        isReference: Boolean,
-        currentToReferenceScale: Float,
-    ) {
-        bindFramebufferOutput(superResolutionAccumulatorTexture, "accumulateSuperResolutionFrame")
-        GLES30.glViewport(0, 0, gpuOutputWidth, gpuOutputHeight)
-        GLES30.glUseProgram(superResolutionAccumulateProgram)
-        bindTexture(superResolutionAccumulateProgram, "uCurrentY", 0, yTexture)
-        bindTexture(superResolutionAccumulateProgram, "uCurrentCbCr", 1, cbCrTexture)
-        bindTexture(
-            superResolutionAccumulateProgram,
-            "uAlignment",
-            2,
-            if (isReference) zeroFlowTexture else mergeAlignmentTexture,
-        )
-        bindTexture(
-            superResolutionAccumulateProgram,
-            "uFrameWeight",
-            3,
-            if (isReference) identityWeightTexture else frameWeightTexture,
-        )
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(superResolutionAccumulateProgram, "uInputSize"), width, height)
-        GLES31.glUniform2i(
-            GLES31.glGetUniformLocation(superResolutionAccumulateProgram, "uOutputSize"),
-            gpuOutputWidth,
-            gpuOutputHeight,
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(superResolutionAccumulateProgram, "uExposureScale"),
-            currentToReferenceScale,
-        )
-        val globalFrameWeight = spatialGlobalFrameWeight(isReference, currentToReferenceScale)
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(superResolutionAccumulateProgram, "uGlobalFrameWeight"),
-            globalFrameWeight,
-        )
-        GLES31.glUniform1f(
-            GLES31.glGetUniformLocation(superResolutionAccumulateProgram, "uKernelSigma"),
-            MgcSpatialMergeTuning.kernelSigma(SPATIAL_BASE_SCALE, globalFrameWeight),
-        )
-        GLES31.glUniform1i(
-            GLES31.glGetUniformLocation(superResolutionAccumulateProgram, "uUseFrameWeight"),
-            if (isReference) 0 else 1,
-        )
-        val transform = computeSuperResolutionTransform()
-        GLES31.glUniform3f(
-            GLES31.glGetUniformLocation(superResolutionAccumulateProgram, "uTransformX"),
-            transform[0],
-            transform[1],
-            transform[2],
-        )
-        GLES31.glUniform3f(
-            GLES31.glGetUniformLocation(superResolutionAccumulateProgram, "uTransformY"),
-            transform[3],
-            transform[4],
-            transform[5],
-        )
-        GLES30.glEnable(GLES30.GL_BLEND)
-        try {
-            GLES30.glBlendEquation(GLES30.GL_FUNC_ADD)
-            GLES30.glBlendFunc(GLES30.GL_ONE, GLES30.GL_ONE)
-            GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
-        } finally {
-            GLES30.glDisable(GLES30.GL_BLEND)
-        }
-        finishFramebufferPass("accumulateSuperResolutionFrame")
-        currentSuperResolutionAccumulatorTexture = superResolutionAccumulatorTexture
-    }
-
     private fun normalizeOutput() {
         renderAccumulatorToOutput(currentAccumulatorTexture, applyDenoise = false)
-    }
-
-    private fun normalizeSuperResolutionOutput() {
-        bindFramebufferOutput(outputTexture, "normalizeSuperResolutionOutput")
-        GLES30.glViewport(0, 0, gpuOutputWidth, gpuOutputHeight)
-        GLES30.glUseProgram(superResolutionNormalizeProgram)
-        bindTexture(superResolutionNormalizeProgram, "uSrAccumulator", 0, currentSuperResolutionAccumulatorTexture)
-        bindTexture(superResolutionNormalizeProgram, "uBaseAccumulator", 1, currentAccumulatorTexture)
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(superResolutionNormalizeProgram, "uInputSize"), width, height)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(superResolutionNormalizeProgram, "uIsP010"), if (highPrecisionInput) 1 else 0)
-        val transform = computeSuperResolutionTransform()
-        GLES31.glUniform3f(
-            GLES31.glGetUniformLocation(superResolutionNormalizeProgram, "uTransformX"),
-            transform[0],
-            transform[1],
-            transform[2],
-        )
-        GLES31.glUniform3f(
-            GLES31.glGetUniformLocation(superResolutionNormalizeProgram, "uTransformY"),
-            transform[3],
-            transform[4],
-            transform[5],
-        )
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
-        finishFramebufferPass("normalizeSuperResolutionOutput")
     }
 
     private fun renderAccumulatorToOutput(accumulatorTexture: Int, applyDenoise: Boolean) {
@@ -2187,30 +2050,31 @@ class GlesYuvStacker(
         applyDenoise: Boolean,
         label: String,
     ) {
+        val program = if (outputUpscaleEnabled) lanczosOutputProgram else normalizeProgram
         bindFramebufferOutput(targetTexture, label)
         GLES30.glViewport(0, 0, gpuOutputWidth, gpuOutputHeight)
-        GLES30.glUseProgram(normalizeProgram)
-        bindTexture(normalizeProgram, "uAccumulator", 0, accumulatorTexture)
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(normalizeProgram, "uInputSize"), width, height)
-        val transform = computeRenderTransform()
+        GLES30.glUseProgram(program)
+        bindTexture(program, "uAccumulator", 0, accumulatorTexture)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(program, "uInputSize"), width, height)
+        val transform = if (outputUpscaleEnabled) computeOutputResampleTransform() else computeRenderTransform()
         GLES31.glUniform3f(
-            GLES31.glGetUniformLocation(normalizeProgram, "uTransformX"),
+            GLES31.glGetUniformLocation(program, "uTransformX"),
             transform[0],
             transform[1],
             transform[2],
         )
         GLES31.glUniform3f(
-            GLES31.glGetUniformLocation(normalizeProgram, "uTransformY"),
+            GLES31.glGetUniformLocation(program, "uTransformY"),
             transform[3],
             transform[4],
             transform[5],
         )
-        GLES31.glUniform1f(GLES31.glGetUniformLocation(normalizeProgram, "uNoiseBeta"), NOISE_BETA)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(normalizeProgram, "uIsP010"), if (highPrecisionInput) 1 else 0)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(normalizeProgram, "uApplyDenoise"), if (applyDenoise) 1 else 0)
+        GLES31.glUniform1f(GLES31.glGetUniformLocation(program, "uNoiseBeta"), NOISE_BETA)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(program, "uIsP010"), if (highPrecisionInput) 1 else 0)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(program, "uApplyDenoise"), if (applyDenoise) 1 else 0)
         val directOffset = computeDirectSourceOffset()
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(normalizeProgram, "uDirectSource"), if (cpuRotateReadback) 1 else 0)
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(normalizeProgram, "uDirectOffset"), directOffset[0], directOffset[1])
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(program, "uDirectSource"), if (cpuRotateReadback) 1 else 0)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(program, "uDirectOffset"), directOffset[0], directOffset[1])
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass(label)
     }
@@ -2221,29 +2085,30 @@ class GlesYuvStacker(
         targetTexture: Int,
         label: String,
     ) {
+        val program = if (outputUpscaleEnabled) lanczosFrameOutputProgram else alignedFrameOutputProgram
         bindFramebufferOutput(targetTexture, label)
         GLES30.glViewport(0, 0, gpuOutputWidth, gpuOutputHeight)
-        GLES30.glUseProgram(alignedFrameOutputProgram)
-        bindTexture(alignedFrameOutputProgram, "uCurrentY", 0, yTexture)
-        bindTexture(alignedFrameOutputProgram, "uCurrentCbCr", 1, cbCrTexture)
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uInputSize"), width, height)
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uIsP010"), if (highPrecisionInput) 1 else 0)
-        val transform = computeRenderTransform()
+        GLES30.glUseProgram(program)
+        bindTexture(program, "uCurrentY", 0, yTexture)
+        bindTexture(program, "uCurrentCbCr", 1, cbCrTexture)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(program, "uInputSize"), width, height)
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(program, "uIsP010"), if (highPrecisionInput) 1 else 0)
+        val transform = if (outputUpscaleEnabled) computeOutputResampleTransform() else computeRenderTransform()
         GLES31.glUniform3f(
-            GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uTransformX"),
+            GLES31.glGetUniformLocation(program, "uTransformX"),
             transform[0],
             transform[1],
             transform[2],
         )
         GLES31.glUniform3f(
-            GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uTransformY"),
+            GLES31.glGetUniformLocation(program, "uTransformY"),
             transform[3],
             transform[4],
             transform[5],
         )
         val directOffset = computeDirectSourceOffset()
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uDirectSource"), if (cpuRotateReadback) 1 else 0)
-        GLES31.glUniform2i(GLES31.glGetUniformLocation(alignedFrameOutputProgram, "uDirectOffset"), directOffset[0], directOffset[1])
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(program, "uDirectSource"), if (cpuRotateReadback) 1 else 0)
+        GLES31.glUniform2i(GLES31.glGetUniformLocation(program, "uDirectOffset"), directOffset[0], directOffset[1])
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
         finishFramebufferPass(label)
     }
@@ -2869,7 +2734,7 @@ class GlesYuvStacker(
         }
     }
 
-    private fun computeSuperResolutionTransform(): FloatArray {
+    private fun computeOutputResampleTransform(): FloatArray {
         val referenceGpuWidth = if (cpuRotateReadback) referenceOutputHeight else referenceOutputWidth
         val referenceGpuHeight = if (cpuRotateReadback) referenceOutputWidth else referenceOutputHeight
         val scaleX = referenceGpuWidth.toFloat() / gpuOutputWidth
@@ -3495,259 +3360,6 @@ class GlesYuvStacker(
                 } else {
                     fragColor = prev;
                 }
-            }
-        """.trimIndent()
-
-        private val SUPER_RESOLUTION_ACCUMULATE_FRAGMENT_SHADER = """
-            #version 300 es
-            precision highp float;
-            uniform sampler2D uCurrentY;
-            uniform sampler2D uCurrentCbCr;
-            uniform sampler2D uFlowGrid;
-            uniform sampler2D uRobustness;
-            uniform sampler2D uTileMask;
-            uniform sampler2D uKernel;
-            uniform sampler2D uAccumulatorInput;
-            uniform ivec2 uInputSize;
-            uniform ivec2 uGridSize;
-            uniform int uTileSize;
-            uniform int uIsReference;
-            uniform float uFrameWeight;
-            uniform float uSrSplatRadius;
-            uniform vec3 uTransformX;
-            uniform vec3 uTransformY;
-            out vec4 fragColor;
-
-            vec2 referencePixel(ivec2 outP) {
-                return vec2(
-                    float(outP.x) * uTransformX.x + float(outP.y) * uTransformX.y + uTransformX.z,
-                    float(outP.x) * uTransformY.x + float(outP.y) * uTransformY.y + uTransformY.z
-                );
-            }
-
-            bool validInput(vec2 pixel) {
-                return pixel.x >= 0.0 && pixel.y >= 0.0 &&
-                    pixel.x <= float(uInputSize.x - 1) &&
-                    pixel.y <= float(uInputSize.y - 1);
-            }
-
-            vec2 flowAt(vec2 pixel) {
-                vec2 grid = pixel / float(uTileSize);
-                vec2 uv = (grid + vec2(0.5)) / vec2(uGridSize);
-                return texture(uFlowGrid, clamp(uv, vec2(0.0), vec2(1.0))).rg;
-            }
-
-            vec2 gridUv(vec2 pixel) {
-                return clamp((pixel / float(uTileSize) + vec2(0.5)) / vec2(uGridSize), vec2(0.0), vec2(1.0));
-            }
-
-            vec2 inputUv(vec2 pixel) {
-                return clamp((pixel + vec2(0.5)) / vec2(uInputSize), vec2(0.0), vec2(1.0));
-            }
-
-            vec3 sampleYcc(vec2 pixel) {
-                float y = texture(uCurrentY, inputUv(pixel)).r;
-                ivec2 chromaSize = (uInputSize + ivec2(1)) / 2;
-                vec2 chromaPixel = floor(pixel * 0.5);
-                vec2 chromaUv = clamp((chromaPixel + vec2(0.5)) / vec2(chromaSize), vec2(0.0), vec2(1.0));
-                vec2 cbcr = texture(uCurrentCbCr, chromaUv).rg;
-                return vec3(y, cbcr);
-            }
-
-            float kernelWeight(vec2 tap, vec4 kp) {
-                float cosT = sqrt(max(0.0, 0.5 * (1.0 + kp.z)));
-                float sinT = sign(kp.w) * sqrt(max(0.0, 0.5 * (1.0 - kp.z)));
-                float u = cosT * tap.x + sinT * tap.y;
-                float v = -sinT * tap.x + cosT * tap.y;
-                float e = 0.25 * (kp.x * u * u + kp.y * v * v);
-                return exp(-0.5 * e);
-            }
-
-            void main() {
-                ivec2 p = ivec2(gl_FragCoord.xy);
-                vec4 prev = texelFetch(uAccumulatorInput, p, 0);
-                vec2 refPixel = referencePixel(p);
-                if (!validInput(refPixel)) {
-                    fragColor = prev;
-                    return;
-                }
-
-                if (uIsReference != 0) {
-                    float weight = max(uFrameWeight, 1e-6);
-                    vec3 ycc = sampleYcc(refPixel);
-                    fragColor = prev + vec4(ycc * weight, weight);
-                    return;
-                }
-
-                vec2 flow = flowAt(refPixel);
-                vec2 source = refPixel + flow;
-                if (source.x < 1.0 || source.y < 1.0 ||
-                    source.x > float(uInputSize.x - 2) || source.y > float(uInputSize.y - 2)) {
-                    fragColor = prev;
-                    return;
-                }
-
-                float robust = texture(uRobustness, inputUv(refPixel)).r;
-                float local = texture(uTileMask, gridUv(refPixel)).r;
-                float baseWeight = uFrameWeight * local * max(robust, 0.01 * local);
-                if (baseWeight <= 0.001) {
-                    fragColor = prev;
-                    return;
-                }
-
-                ivec2 kernelCoord = clamp(ivec2(floor(refPixel + vec2(0.5))), ivec2(0), uInputSize - ivec2(1));
-                vec4 kp = texelFetch(uKernel, kernelCoord, 0);
-                vec3 sum = vec3(0.0);
-                float weight = 0.0;
-                float radius = max(uSrSplatRadius, 0.25);
-                for (int y = -1; y <= 1; ++y) {
-                    for (int x = -1; x <= 1; ++x) {
-                        vec2 tap = vec2(x, y);
-                        vec2 offset = tap * radius;
-                        float kw = kernelWeight(offset, kp);
-                        vec3 ycc = sampleYcc(source + offset);
-                        float w = baseWeight * kw;
-                        sum += ycc * w;
-                        weight += w;
-                    }
-                }
-
-                if (weight > 1e-5) {
-                    fragColor = prev + vec4(sum, weight);
-                } else {
-                    fragColor = prev;
-                }
-            }
-        """.trimIndent()
-
-        private val SUPER_RESOLUTION_NORMALIZE_FRAGMENT_SHADER = """
-            #version 300 es
-            precision highp float;
-            uniform sampler2D uSrAccumulator;
-            uniform sampler2D uBaseAccumulator;
-            uniform ivec2 uInputSize;
-            uniform ivec2 uOutputSize;
-            uniform vec3 uTransformX;
-            uniform vec3 uTransformY;
-            uniform float uNoiseBeta;
-            uniform float uMinDetailWeight;
-            uniform int uIsP010;
-            out vec4 fragColor;
-
-            vec2 referencePixel(ivec2 outP) {
-                return vec2(
-                    float(outP.x) * uTransformX.x + float(outP.y) * uTransformX.y + uTransformX.z,
-                    float(outP.x) * uTransformY.x + float(outP.y) * uTransformY.y + uTransformY.z
-                );
-            }
-
-            vec4 readBaseAccumulator(ivec2 p) {
-                p = clamp(p, ivec2(0), uInputSize - ivec2(1));
-                return texelFetch(uBaseAccumulator, p, 0);
-            }
-
-            vec3 yccFromAccumulator(vec4 a) {
-                if (a.a <= 1e-4) {
-                    return vec3(0.0, 0.5, 0.5);
-                }
-                return clamp(a.rgb / a.a, vec3(0.0), vec3(1.0));
-            }
-
-            vec3 baseYccAt(ivec2 p) {
-                return yccFromAccumulator(readBaseAccumulator(p));
-            }
-
-            float baseWeightAt(ivec2 p) {
-                return readBaseAccumulator(p).a;
-            }
-
-            vec3 sampleBaseYcc(vec2 pixel) {
-                vec2 pos = clamp(pixel, vec2(0.0), vec2(uInputSize - ivec2(1)));
-                ivec2 p0 = ivec2(floor(pos));
-                ivec2 p1 = min(p0 + ivec2(1), uInputSize - ivec2(1));
-                vec2 f = pos - vec2(p0);
-                vec3 v00 = baseYccAt(p0);
-                vec3 v10 = baseYccAt(ivec2(p1.x, p0.y));
-                vec3 v01 = baseYccAt(ivec2(p0.x, p1.y));
-                vec3 v11 = baseYccAt(p1);
-                return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
-            }
-
-            float sampleBaseWeight(vec2 pixel) {
-                vec2 pos = clamp(pixel, vec2(0.0), vec2(uInputSize - ivec2(1)));
-                ivec2 p0 = ivec2(floor(pos));
-                ivec2 p1 = min(p0 + ivec2(1), uInputSize - ivec2(1));
-                vec2 f = pos - vec2(p0);
-                float v00 = baseWeightAt(p0);
-                float v10 = baseWeightAt(ivec2(p1.x, p0.y));
-                float v01 = baseWeightAt(ivec2(p0.x, p1.y));
-                float v11 = baseWeightAt(p1);
-                return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
-            }
-
-            vec3 yccToRgb(vec3 ycc) {
-                float y = ycc.x;
-                float cb = ycc.y - 0.5;
-                float cr = ycc.z - 0.5;
-                if (uIsP010 != 0) {
-                    return vec3(
-                        y + 1.4746 * cr,
-                        y - 0.16455 * cb - 0.57135 * cr,
-                        y + 1.8814 * cb
-                    );
-                }
-                return vec3(
-                    y + 1.402 * cr,
-                    y - 0.344136 * cb - 0.714136 * cr,
-                    y + 1.772 * cb
-                );
-            }
-
-            vec3 denoiseLuma(vec3 ycc, ivec2 p, float baseWeight, float confidence) {
-                float mean = 0.0;
-                float mean2 = 0.0;
-                float count = 0.0;
-                for (int y = -1; y <= 1; ++y) {
-                    for (int x = -1; x <= 1; ++x) {
-                        ivec2 q = p + ivec2(x, y);
-                        if (q.x < 0 || q.y < 0 || q.x >= uOutputSize.x || q.y >= uOutputSize.y) {
-                            continue;
-                        }
-                        vec4 a = texelFetch(uSrAccumulator, q, 0);
-                        float yy = a.a > 1e-4 ? a.r / a.a : ycc.x;
-                        mean += yy;
-                        mean2 += yy * yy;
-                        count += 1.0;
-                    }
-                }
-                mean /= max(count, 1.0);
-                mean2 /= max(count, 1.0);
-                float variance = max(mean2 - mean * mean, 0.0);
-                float noise = uNoiseBeta / max(baseWeight, 1.0);
-                float wienerGain = max(variance - noise, 0.0) / max(variance, 1e-6);
-                float flatness = 1.0 - smoothstep(0.00035, 0.0055, variance);
-                float strength = 0.38 * flatness * (1.0 - 0.55 * confidence);
-                ycc.x = mix(ycc.x, mean + wienerGain * (ycc.x - mean), strength);
-                return ycc;
-            }
-
-            void main() {
-                ivec2 p = ivec2(gl_FragCoord.xy);
-                vec2 refPixel = referencePixel(p);
-                vec3 base = sampleBaseYcc(refPixel);
-                float baseWeight = sampleBaseWeight(refPixel);
-                vec4 srAccum = texelFetch(uSrAccumulator, p, 0);
-                vec3 sr = srAccum.a > 1e-4 ? clamp(srAccum.rgb / srAccum.a, vec3(0.0), vec3(1.0)) : base;
-                float detailSupport = max(srAccum.a - 1.0, 0.0);
-                float confidence = smoothstep(
-                    max(uMinDetailWeight, 0.02),
-                    max(uMinDetailWeight * 3.0, 1.35),
-                    detailSupport
-                );
-                vec3 ycc = mix(base, sr, confidence);
-                ycc = denoiseLuma(ycc, p, baseWeight, confidence);
-                vec3 rgb = clamp(yccToRgb(ycc), vec3(0.0), vec3(1.0));
-                fragColor = vec4(rgb, 1.0);
             }
         """.trimIndent()
 
