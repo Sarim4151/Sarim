@@ -3442,6 +3442,7 @@ object GalleryManager {
                 mgcDenoiseShotNoise = finalStackResult.mgcDenoiseShotNoise,
                 mgcSpatialStrengthMap = finalStackResult.mgcSpatialStrengthMap,
                 mgcDenoiseTuningSnr = finalStackResult.mgcDenoiseTuningSnr,
+                mgcSharpenTuningSnr = finalStackResult.mgcSharpenTuningSnr,
                 mgcSharpenAttenuationScale =
                     finalStackResult.mgcSharpenAttenuationScale,
             )
@@ -3708,6 +3709,7 @@ object GalleryManager {
                     sharpeningValue = rawSharpening,
                     processLocalQualityTuningSensorAreaMm2 =
                         PhotonSensorSizeTuning.areaFromProperties(updatedMetadata.customProperties),
+                    processLocalMgcSharpenTuningSnr = finalStackResult.mgcSharpenTuningSnr,
                     processLocalMgcSharpenAttenuationScale =
                         finalStackResult.mgcSharpenAttenuationScale,
                     denoiseValue = rawNoiseReduction,

@@ -147,6 +147,7 @@ object RawProcessor {
             exposureCompensation = baseMetadata.exposureCompensation,
             exposureBias = baseMetadata.exposureBias,
             frameCount = 1,
+            mgcSharpenTuningSnr = baseMetadata.mgcSharpenTuningSnr,
             mgcSharpenAttenuationScale = baseMetadata.mgcSharpenAttenuationScale,
             rotation = rotation,
             profileGainTableMap = profilePreparation.profileGainTableMap,

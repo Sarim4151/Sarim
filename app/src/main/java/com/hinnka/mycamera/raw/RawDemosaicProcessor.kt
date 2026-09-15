@@ -226,6 +226,7 @@ class RawDemosaicProcessor {
             mgcDenoiseShotNoise = baseMetadata?.mgcDenoiseShotNoise,
             mgcSpatialStrengthMap = baseMetadata?.mgcSpatialStrengthMap,
             mgcDenoiseTuningSnr = baseMetadata?.mgcDenoiseTuningSnr,
+            mgcSharpenTuningSnr = baseMetadata?.mgcSharpenTuningSnr,
             mgcSharpenAttenuationScale = baseMetadata?.mgcSharpenAttenuationScale,
             rawMaxQualityTuningSensorAreaMm2 = baseMetadata?.rawMaxQualityTuningSensorAreaMm2,
             rotation = dngRawData.rotation,
@@ -1497,6 +1498,7 @@ class RawDemosaicProcessor {
     private val adjustmentPass = RawAdjustmentPass(fullscreenQuad)
     private val srgbPass = RawSrgbPass(fullscreenQuad)
     private val sharpenPass = RawSharpenPass(fullscreenQuad)
+    private val mgcSharpen = MgcSharpen()
     private val outputPass = RawOutputPass(fullscreenQuad)
     private val linearUintToFloatPass = RawLinearUintToFloatPass()
     private val linearRgbExpandPass = RawLinearRgbExpandPass()
@@ -2056,6 +2058,7 @@ class RawDemosaicProcessor {
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
         processLocalQualityTuningSensorAreaMm2: Float? = null,
+        processLocalMgcSharpenTuningSnr: Float? = null,
         processLocalMgcSharpenAttenuationScale: Float? = null,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -2104,8 +2107,8 @@ class RawDemosaicProcessor {
                 rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
                 processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
-                processLocalMgcSharpenAttenuationScale =
-                    processLocalMgcSharpenAttenuationScale,
+                processLocalMgcSharpenTuningSnr = processLocalMgcSharpenTuningSnr,
+                processLocalMgcSharpenAttenuationScale = processLocalMgcSharpenAttenuationScale,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
                 rawDcpId = rawDcpId,
@@ -2321,6 +2324,7 @@ class RawDemosaicProcessor {
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
         processLocalQualityTuningSensorAreaMm2: Float? = null,
+        processLocalMgcSharpenTuningSnr: Float? = null,
         processLocalMgcSharpenAttenuationScale: Float? = null,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -2523,6 +2527,7 @@ class RawDemosaicProcessor {
                 mgcDenoiseShotNoise = null,
                 mgcSpatialStrengthMap = null,
                 mgcDenoiseTuningSnr = null,
+                mgcSharpenTuningSnr = processLocalMgcSharpenTuningSnr,
                 mgcSharpenAttenuationScale =
                     processLocalMgcSharpenAttenuationScale,
             )
@@ -2584,6 +2589,7 @@ class RawDemosaicProcessor {
                 rawData = actualRawData,
                 rowStride = actualRowStride,
                 samplesPerPixel = actualSamplesPerPixel,
+                needsSharpen = RawSharpeningDefaults.toAlgorithmStrength(sharpeningValue) > 0f,
             )
         }
 
@@ -3954,7 +3960,10 @@ class RawDemosaicProcessor {
             // 6. 第三步：锐化 (Sharpen Pass)
             setupSharpenFramebuffer(actualWidth, actualHeight)
             val sharpenStart = System.currentTimeMillis()
-            renderFinalSharpenPass(actualMetadata, sharpeningValue, combinedOutput.encodedTextureId)
+            renderFinalSharpenPass(
+                actualMetadata, sharpeningValue, combinedOutput.encodedTextureId,
+                borrowedGpuSource?.stackCompletionTimeline,
+            )
             PLog.d(TAG, "Sharpen Pass took: ${System.currentTimeMillis() - sharpenStart}ms")
             // combinedTextureId 已被 sharpenPass 消费，提前释放
             if (combinedTextureId != 0) {
@@ -4596,6 +4605,7 @@ class RawDemosaicProcessor {
     }
 
     private fun releaseTiledRenderFramebuffers() {
+        mgcSharpen.releaseBuffers()
         vgnDemosaicAlgorithm.setTileTexturePoolingEnabled(false)
         if (rawTextureId != 0) {
             GLES30.glDeleteTextures(1, intArrayOf(rawTextureId), 0)
@@ -7482,15 +7492,17 @@ class RawDemosaicProcessor {
         ) { "RAW HDR reference pass failed" }
     }
 
-    /** Measures the render source only when single-frame MGC denoise needs physical SNR. */
+    /** Share one native RAW measurement; merged captures already carry reference-frame SNR. */
     private fun RawMetadata.withMgcRenderTuning(
         rawData: ByteBuffer?,
         rowStride: Int,
         samplesPerPixel: Int,
+        needsSharpen: Boolean,
     ): RawMetadata {
         val needsSingleFrameDenoiseSnr =
             samplesPerPixel == 1 && frameCount == 1 && mgcDenoiseTuningSnr == null
-        if (!needsSingleFrameDenoiseSnr) {
+        val needsSharpenSnr = needsSharpen && frameCount == 1 && mgcSharpenTuningSnr == null
+        if (!needsSingleFrameDenoiseSnr && !needsSharpenSnr) {
             return this
         }
         val source = rawData ?: return this
@@ -7540,9 +7552,11 @@ class RawDemosaicProcessor {
                 "MGC RAW render tuning signal=$signal snr=$snr " +
                     "greenShot=$greenShot greenRead=$greenRead " +
                     "singleFrameDenoise=$needsSingleFrameDenoiseSnr " +
+                    "sharpen=$needsSharpenSnr " +
                     "signalSource=NATIVE_OMP signalMs=$signalElapsedMs",
         )
         return copy(
+            mgcSharpenTuningSnr = if (needsSharpenSnr) snr else mgcSharpenTuningSnr,
             mgcDenoiseTuningSnr = if (needsSingleFrameDenoiseSnr) {
                 snr
             } else {
@@ -7598,6 +7612,7 @@ class RawDemosaicProcessor {
         metadata: RawMetadata,
         sharpeningValue: Float,
         inputTextureId: Int,
+        stackCompletionTimeline: GpuStackCompletionTimeline? = null,
     ) {
         val sliderValue = RawSharpeningDefaults.normalize(sharpeningValue)
         val algorithmStrength = RawSharpeningDefaults.toAlgorithmStrength(sliderValue)
@@ -7606,19 +7621,31 @@ class RawDemosaicProcessor {
                 "MGC sharpen attenuation is invalid: $attenuation"
             }
         } ?: 1f
-        val effectiveStrength = (algorithmStrength * runtimeAttenuation).coerceIn(
-            0f,
-            RawSharpeningDefaults.MAX_ALGORITHM_STRENGTH,
-        )
-        renderSharpenPass(metadata, effectiveStrength, inputTextureId)
-        if (metadata.mgcSharpenAttenuationScale != null) {
-            PLog.i(
-                TAG,
-                "MGC final sharpen uses GLES scale-supported USM size=${metadata.width}x${metadata.height} " +
-                    "runtimeAttenuation=$runtimeAttenuation slider=$sliderValue " +
-                    "algorithmStrength=$algorithmStrength effectiveStrength=$effectiveStrength " +
-                    "cpuReadback=false",
+        val effectiveStrength = algorithmStrength * runtimeAttenuation
+        if (effectiveStrength <= 0f) {
+            renderSharpenPass(metadata, 0f, inputTextureId)
+            return
+        }
+        val snr = metadata.mgcSharpenTuningSnr
+        if (snr != null) {
+            check(snr.isFinite() && snr > 0f) { "MGC sharpen reference SNR is invalid: $snr" }
+            check(inputTextureId == combinedTextureId) { "MGC sharpen requires the encoded combined output" }
+            stackCompletionTimeline?.awaitPending(
+                syncPoint = "RAW_SHARPEN_INPUT", checkGlError = ::checkGlError,
+            )?.let { PLog.i(TAG, "MGC sharpen upstreamStackGpuWait=${it.totalWaitMs}ms") }
+            mgcSharpen.render(
+                sourceTexture = inputTextureId,
+                sourceFramebuffer = combinedFramebufferId,
+                targetTexture = sharpenTextureId,
+                width = metadata.width,
+                height = metadata.height,
+                snr = snr,
+                attenuation = effectiveStrength,
             )
+        } else {
+            // Non-MGC GPU-only sources may have no reference RAW/statistics available.
+            PLog.w(TAG, "Original MGC sharpen unavailable: missing reference SNR; using GLES USM")
+            renderSharpenPass(metadata, effectiveStrength, inputTextureId)
         }
     }
 
@@ -8786,6 +8813,7 @@ class RawDemosaicProcessor {
     }
 
     private fun releaseSharpenFramebuffer() {
+        mgcSharpen.releaseBuffers()
         if (sharpenTextureId != 0) {
             GLES30.glDeleteTextures(1, intArrayOf(sharpenTextureId), 0)
             sharpenTextureId = 0
@@ -8992,6 +9020,7 @@ class RawDemosaicProcessor {
         adjustmentPass.release()
         srgbPass.release()
         sharpenPass.release()
+        mgcSharpen.release()
         outputPass.release()
         hdrReferencePass.release()
         chromaDenoiseAlgorithm.release()

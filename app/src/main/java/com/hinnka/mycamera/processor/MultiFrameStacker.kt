@@ -140,7 +140,9 @@ data class RawStackResult(
      * This is the linear signal-domain SNR, not ISO or sensor gain.
      */
     val mgcDenoiseTuningSnr: Float? = null,
-    /** MGC-derived attenuation applied to Photon's final GLES sharpen strength. */
+    /** Reference-frame SNR for original MGC sharpen curve selection; not the merged SNR. */
+    val mgcSharpenTuningSnr: Float? = null,
+    /** MGC-derived attenuation applied to the final sharpen kernel. */
     val mgcSharpenAttenuationScale: Float? = null,
     /**
      * True only for the debug reference-only isolation path. This state is process-local and is

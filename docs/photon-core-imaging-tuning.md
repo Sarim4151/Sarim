@@ -79,7 +79,11 @@ revert/outlier 不覆盖资产节点，只应用上述倍率。用户 RAW luma/c
 
 ## 锐化与除雾
 
-画质调优不改变当前最终 GLES USM 锐化；用户 sharpening 滑杆与融合 attenuation 控制其强度。
+画质调优不改变最终锐化参数。具备参考帧 SNR 的 RAW 使用 MGC 9.6 原版
+`SharpenTo16BitHalide` 和 `sharpen_default.binarypb` 曲线；用户 sharpening 滑杆与融合
+attenuation 控制其强度。锐化选择曲线使用参考帧 SNR，降噪使用融合后 SNR，两者不可混用。
+没有参考帧统计且无法访问原始 RAW 的其他 GPU 来源保留 GLES USM，并记录原因。
+实现边界与实机性能验证见 [MGC 锐化](research/mgc-sharpen-performance.md)。
 HDRNet Dehaze/DHA 继续使用本地默认值，独立于面积拟合。完整链路见
 [Photon HDRNet Dehaze + DHA 链路](photon-dehaze-pipeline.md)。
 

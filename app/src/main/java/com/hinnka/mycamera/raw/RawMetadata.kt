@@ -193,7 +193,9 @@ data class RawMetadata(
     val mgcSpatialStrengthMap: MgcSpatialStrengthMap? = null,
     /** Merged output-frame SNR used by MGC FinishRaw to select luma/chroma tuning. */
     val mgcDenoiseTuningSnr: Float? = null,
-    /** MGC-derived attenuation applied to Photon's final GLES sharpen strength. */
+    /** Reference-frame SNR for original MGC sharpen curve selection; not the merged SNR. */
+    val mgcSharpenTuningSnr: Float? = null,
+    /** MGC-derived attenuation applied to the final sharpen kernel. */
     val mgcSharpenAttenuationScale: Float? = null,
     val rotation: Int? = null,
     val profileGainTableMap: DngProfileGainTableMap? = null,
@@ -1217,6 +1219,7 @@ data class RawMetadata(
         } else if (other.mgcDenoiseShotNoise != null) return false
         if (mgcSpatialStrengthMap != other.mgcSpatialStrengthMap) return false
         if (mgcDenoiseTuningSnr != other.mgcDenoiseTuningSnr) return false
+        if (mgcSharpenTuningSnr != other.mgcSharpenTuningSnr) return false
         if (mgcSharpenAttenuationScale != other.mgcSharpenAttenuationScale) return false
         if (rawMaxQualityTuningSensorAreaMm2 != other.rawMaxQualityTuningSensorAreaMm2) return false
         if (rotation != other.rotation) return false
@@ -1255,6 +1258,7 @@ data class RawMetadata(
         result = 31 * result + (mgcDenoiseShotNoise?.contentHashCode() ?: 0)
         result = 31 * result + (mgcSpatialStrengthMap?.hashCode() ?: 0)
         result = 31 * result + (mgcDenoiseTuningSnr?.hashCode() ?: 0)
+        result = 31 * result + (mgcSharpenTuningSnr?.hashCode() ?: 0)
         result = 31 * result + (mgcSharpenAttenuationScale?.hashCode() ?: 0)
         result = 31 * result + (rawMaxQualityTuningSensorAreaMm2?.hashCode() ?: 0)
         result = 31 * result + (rotation ?: 0)

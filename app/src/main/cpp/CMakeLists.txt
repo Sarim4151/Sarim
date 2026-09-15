@@ -114,6 +114,41 @@ set_source_files_properties(
 )
 
 set(
+    MGC_SHARPEN_CAPSULE
+    "${CMAKE_CURRENT_SOURCE_DIR}/mgc_denoise_static/mgc_sharpen_capsule.bin"
+)
+set(
+    MGC_SHARPEN_CAPSULE_SHA256
+    "733065cfec32ac752cc2088ea284b44a55b24a6171e5829f6971dcb098b1d7ce"
+)
+if(NOT EXISTS "${MGC_SHARPEN_CAPSULE}")
+    message(
+        FATAL_ERROR
+        "MGC SharpenTo16Bit capsule is missing; restore the tracked "
+        "mgc_denoise_static/mgc_sharpen_capsule.bin asset"
+    )
+endif()
+file(SHA256 "${MGC_SHARPEN_CAPSULE}" MGC_SHARPEN_CAPSULE_ACTUAL_SHA256)
+if(NOT MGC_SHARPEN_CAPSULE_ACTUAL_SHA256 STREQUAL MGC_SHARPEN_CAPSULE_SHA256)
+    message(FATAL_ERROR "MGC SharpenTo16Bit capsule hash mismatch")
+endif()
+set(
+    MGC_SHARPEN_ASM
+    "${CMAKE_CURRENT_BINARY_DIR}/mgc_sharpen_static.S"
+)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/mgc_denoise_static/mgc_sharpen_static.S.in"
+    "${MGC_SHARPEN_ASM}"
+    @ONLY
+)
+set_source_files_properties(
+    "${MGC_SHARPEN_ASM}"
+    PROPERTIES
+    GENERATED TRUE
+    OBJECT_DEPENDS "${MGC_SHARPEN_CAPSULE}"
+)
+
+set(
     MGC_SPATIAL_RGB_CAPSULE
     "${CMAKE_CURRENT_SOURCE_DIR}/mgc_denoise_static/mgc_spatial_rgb_merge_capsule.bin"
 )
@@ -269,6 +304,8 @@ add_library(my-native-lib SHARED
     mgc_denoise_static/mgc_sabre_resolve_jni.cpp
     mgc_denoise_static/mgc_spatial_rgb_merge_jni.cpp
     mgc_denoise_static/mgc_spatial_strength_jni.cpp
+    mgc_denoise_static/mgc_sharpen_jni.cpp
+    "${MGC_SHARPEN_ASM}"
     "${MGC_DENOISE_ASM}"
     "${MGC_DEMOIRE_ASM}"
     "${MGC_SABRE_ASM}"
@@ -305,9 +342,11 @@ set_source_files_properties(
 )
 
 # RAW signal statistics define MGC's physical tuning coordinate, while PGTM validation must
-# reliably reject non-finite values. Keep both independent of target-wide fast-math.
+# reliably reject non-finite values. The sharpen adapter must preserve separate matrix
+# multiply/adds and nearest-even U12 rounding. Keep these independent of fast-math.
 set_source_files_properties(
     raw_signal_stats_jni.cpp
+    mgc_denoise_static/mgc_sharpen_jni.cpp
     PROPERTIES
     COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off"
 )
