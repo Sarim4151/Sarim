@@ -57,7 +57,7 @@ import me.saket.telephoto.zoomable.rememberZoomableState
 import com.hinnka.mycamera.ui.icons.AppIcons
 
 @SuppressLint("LocalContextGetResourceValueCall")
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun LutSynthesisScreen(
     onNavigateBack: () -> Unit,
@@ -227,7 +227,7 @@ fun LutSynthesisScreen(
                     )
                 }
 
-                // 交互层：Loading / 对比提示
+                // 加载状态覆盖层
                 if (isLoading) {
                     Box(
                         modifier = Modifier
@@ -238,46 +238,48 @@ fun LutSynthesisScreen(
                         CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp)
                     }
                 }
+            }
 
-                // 底部轻量提示条
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .background(Color.Black.copy(alpha = 0.5f))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            // 提示和操作独立于照片；长文案按可用宽度换行，避免挤压按钮并撑大遮罩。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF121212))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.lut_synthesis_compare_tip),
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 10.sp
+                )
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.lut_synthesis_compare_tip),
-                        color = Color.White.copy(alpha = 0.6f),
-                        fontSize = 10.sp
+                        text = stringResource(R.string.lut_synthesis_select_gallery),
+                        color = Color(0xFF2196F3),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { galleryLauncher.launch("image/*") }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
                     )
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = stringResource(R.string.lut_synthesis_select_gallery),
-                            color = Color(0xFF2196F3),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .clickable { galleryLauncher.launch("image/*") }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-
-                        Text(
-                            text = stringResource(R.string.lut_synthesis_default_preview),
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .clickable { viewModel.useDefaultPreview() }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
+                    Text(
+                        text = stringResource(R.string.lut_synthesis_default_preview),
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { viewModel.useDefaultPreview() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
                 }
             }
 
