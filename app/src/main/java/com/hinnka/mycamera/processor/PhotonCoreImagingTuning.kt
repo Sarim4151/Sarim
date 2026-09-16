@@ -4,6 +4,8 @@ package com.hinnka.mycamera.processor
 object PhotonCoreImagingTuning {
     val fusion: PhotonFusionTuning = PhotonFusionTuning.DEFAULT
     val denoise: PhotonDenoiseTuning = PhotonDenoiseTuning.DEFAULT
+    /** Local SNR/contrast curves for the original MGC final sharpening kernel. */
+    val sharpen: PhotonSharpenTuning = PhotonSharpenTuning.DEFAULT
     /** Dehaze + DHA baked into HDRNet's ProfileGainTableMap output. */
     val dehaze: PhotonDehazeTuning = PhotonDehazeTuning.DEFAULT
 }

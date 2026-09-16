@@ -112,13 +112,19 @@ static void VerifyConversions() {
             "U12 to U8 exact");
   puts("PASS all 16777216 RGB8 colors, SIMD tails, all uint16 output values");
 }
-static void Sharpen(int16_t *in, uint16_t *out, int w, int h, float snr = 20) {
-  SharpenCurveSelection curves;
-  const float scales[] = {1, 1, 1};
-  Check(BuildDefaultSharpenCurves(snr, scales, &curves), "curves");
+static void Sharpen(int16_t *in, uint16_t *out, int w, int h) {
+  // Frozen SNR20 generic fixture for adapter/tile/performance checks.
+  // Production defaults now live only in PhotonSharpenTuning; the JVM regression
+  // checks cover its table and SNR interpolation independently of this probe.
+  const float curves[] = {
+      0, .05f, 1, 2, 3, 0, .03f, 1, 2, 3, 0, .02f, 1, 2, 3,
+      0, .05f * 1.6f, 3.2f, 2, 3,
+      0, .03f * 1.3f, 2.6f, 2, 3,
+      0, .02f, 1.4f, 2, 3,
+  };
+  const float corner_correction[] = {0, 0, 0};
   int rc =
-      RunSharpenTo16Bit(in, w, h, curves.curves,
-                        curves.relative_corner_acutance_correction, .8f, out);
+      RunSharpenTo16Bit(in, w, h, curves, corner_correction, .8f, out);
   if (rc)
     fprintf(stderr, "kernel size=%dx%d rc=%d\n", w, h, rc);
   Check(rc == 0, "kernel");

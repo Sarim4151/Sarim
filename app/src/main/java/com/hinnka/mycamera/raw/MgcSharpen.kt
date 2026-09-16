@@ -3,6 +3,8 @@ package com.hinnka.mycamera.raw
 import android.opengl.GLES30
 import android.opengl.GLES31
 import com.hinnka.mycamera.processor.GlesGpuCompletion
+import com.hinnka.mycamera.processor.PhotonCoreImagingTuning
+import com.hinnka.mycamera.processor.PhotonSharpenTuning
 import com.hinnka.mycamera.utils.LargeDirectBuffer
 import com.hinnka.mycamera.utils.PLog
 import java.nio.ByteBuffer
@@ -25,9 +27,11 @@ internal class MgcSharpen {
         height: Int,
         snr: Float,
         attenuation: Float,
+        tuning: PhotonSharpenTuning = PhotonCoreImagingTuning.sharpen,
     ) {
         require(width > 0 && height > 0 && snr.isFinite() && snr > 0f)
         require(attenuation.isFinite() && attenuation >= 0f)
+        val curves = MgcSharpenCurveBuilder.build(snr, tuning)
         val pixels = width.toLong() * height
         val outputPixels = width.toLong() * ((height.toLong() + 1) and -2L)
         val scratchBytes = (pixels + outputPixels) * 6
@@ -70,7 +74,7 @@ internal class MgcSharpen {
             val nativeStart = System.nanoTime()
             try {
                 val result = nativeSharpenRgba8(mapped.order(ByteOrder.nativeOrder()),
-                    checkNotNull(scratch), width, height, snr, attenuation)
+                    checkNotNull(scratch), width, height, snr, attenuation, curves.points)
                 check(result == 0) { "MGC original sharpen failed: $result" }
             } finally {
                 check(GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)) {
@@ -85,6 +89,8 @@ internal class MgcSharpen {
             }
             PLog.i(TAG, "originalMgc=true size=${width}x$height referenceSnr=$snr " +
                 "attenuation=$attenuation transfer=${if (useCompute) "SSBO" else "PBO"} " +
+                "curveSnr=${curves.lowerSnr}:${curves.upperSnr} curveMix=${curves.interpolation} " +
+                "bandAmount=${tuning.amount} mainGains=${curves.mainGains} " +
                 "allocationMs=$allocationMs upstreamGpuWaitMs=$upstreamWaitMs " +
                 "transferAndMapMs=$transferMs nativeAndUnmapMs=$nativeMs " +
                 "uploadSubmitMs=${elapsedMs(uploadStart)} totalCpuMs=${elapsedMs(start)}")
@@ -147,6 +153,7 @@ internal class MgcSharpen {
 
     private external fun nativeSharpenRgba8(
         rgba: ByteBuffer, scratch: ByteBuffer, width: Int, height: Int, snr: Float, attenuation: Float,
+        curves: FloatArray,
     ): Int
     private external fun nativeUploadRgba8(pbo: Int, texture: Int, width: Int, height: Int): Boolean
 

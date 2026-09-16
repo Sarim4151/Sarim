@@ -2,7 +2,8 @@
 
 `PhotonCoreImagingTuning` 保持为本地默认值单例，不提供核心参数的持久化读写。
 设置 → 专业设置 → HDR+ 画质中的「HDR+ 画质调优」恢复 1.27.2.2 的传感器面积调优算法，
-默认关闭；开启后仅对 HDR+（RAWmax）拍摄应用。传感器面积缺失或无效时使用默认参数。
+默认关闭；开启后仅对 HDR+（RAWmax）拍摄应用。融合/降噪随传感器面积拟合，锐化使用统一固定配方。
+传感器面积缺失或无效时，融合/降噪使用默认参数，固定锐化仍按开关生效。
 
 ## 本地默认值
 
@@ -70,8 +71,8 @@ revert/outlier 不覆盖资产节点，只应用上述倍率。用户 RAW luma/c
 ## 拍摄与重处理
 
 - 开关由 `UserPreferencesRepository` 保存；拍摄时取当前镜头的物理传感器面积。
-- 每张照片只保存 `photonCoreTuningModel=photon-sensor-area-v1` 和 `photonSensorPhysicalAreaMm2`
-  两项，用于重建启用时的调优；关闭时不写入这两项。
+- 每张照片保存 `photonCoreTuningModel=photon-sensor-area-v1` 表示启用；有效面积另存
+  `photonSensorPhysicalAreaMm2`。面积缺失也保留启用标记，关闭时不写入这两项。
 - 拍摄默认降噪通过 `RawMetadata.rawMaxQualityTuningSensorAreaMm2` 传入；DNG 重处理和回退路径
   从该照片的属性恢复面积，重新计算参数，不读取当前全局开关，也不读取旧的逐字段核心参数覆盖。
 - `MgcFullResolutionDenoise` 统一解析面积调优，日志记录面积、五层倍率和频率响应。
@@ -79,11 +80,15 @@ revert/outlier 不覆盖资产节点，只应用上述倍率。用户 RAW luma/c
 
 ## 锐化与除雾
 
-画质调优不改变最终锐化参数。具备参考帧 SNR 的 RAW 使用 MGC 9.6 原版
-`SharpenTo16BitHalide` 和 `sharpen_default.binarypb` 曲线；用户 sharpening 滑杆与融合
-attenuation 控制其强度。锐化选择曲线使用参考帧 SNR，降噪使用融合后 SNR，两者不可混用。
+画质调优开启时使用 `PhotonQualitySharpenTuning.FIXED`：参考 AGC LM v1.1 p0 镜头槽0，
+所有传感器使用同一表，不参与面积拟合；仍按参考帧 SNR 在 2/8/16 节点间插值。
+关闭时使用原通用表。照片重处理恢复拍摄时的开关，不读取当前全局开关。
+具备参考帧 SNR 的 RAW 使用 MGC 9.6 原版
+`SharpenTo16BitHalide`。`PhotonCoreImagingTuning.sharpen` 提供本地 SNR 节点、三频段增强倍率
+及显式对比度控制点，关闭画质调优时默认值等效于原 `sharpen_default.binarypb` 曲线；参数含义、完整默认表及
+公式见 [Photon 锐化参数表](photon-sharpen-tuning.md)。用户 sharpening 滑杆与融合 attenuation
+继续控制内核外层强度。锐化选择曲线使用参考帧 SNR，降噪使用融合后 SNR，两者不可混用。
 没有参考帧统计且无法访问原始 RAW 的其他 GPU 来源保留 GLES USM，并记录原因。
-实现边界与实机性能验证见 [MGC 锐化](research/mgc-sharpen-performance.md)。
 HDRNet Dehaze/DHA 继续使用本地默认值，独立于面积拟合。完整链路见
 [Photon HDRNet Dehaze + DHA 链路](photon-dehaze-pipeline.md)。
 

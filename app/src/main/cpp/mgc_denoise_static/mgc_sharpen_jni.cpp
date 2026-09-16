@@ -102,9 +102,9 @@ void SharpenRgbToRgba(const uint16_t *rgb, size_t count, uint8_t *rgba) {
 extern "C" JNIEXPORT jint JNICALL
 Java_com_hinnka_mycamera_raw_MgcSharpen_nativeSharpenRgba8(
     JNIEnv *env, jobject, jobject rgba_buffer, jobject scratch_buffer,
-    jint width, jint height, jfloat snr, jfloat attenuation) {
+    jint width, jint height, jfloat snr, jfloat attenuation, jfloatArray curve_points) {
   using namespace photon::mgc_denoise;
-  if (!rgba_buffer || !scratch_buffer || width <= 0 || height <= 0 ||
+  if (!rgba_buffer || !scratch_buffer || !curve_points || width <= 0 || height <= 0 ||
       !std::isfinite(snr) || snr <= 0 || !std::isfinite(attenuation) ||
       attenuation < 0)
     return -1;
@@ -122,17 +122,31 @@ Java_com_hinnka_mycamera_raw_MgcSharpen_nativeSharpenRgba8(
       env->GetDirectBufferCapacity(scratch_buffer) < jlong(scratch_bytes))
     return -1;
   auto *rgb = reinterpret_cast<uint16_t *>(yuv + count * 3);
-  SharpenCurveSelection curves;
-  constexpr float scales[3] = {1, 1, 1};
-  if (!BuildDefaultSharpenCurves(snr, scales, &curves))
+  // Curves are resolved once in Kotlin from Photon's local, named tuning table.
+  // Halide layout: point + 5 * frequency + 15 * coordinate.
+  if (env->GetArrayLength(curve_points) != 30)
     return -1;
+  float curves[30];
+  env->GetFloatArrayRegion(curve_points, 0, 30, curves);
+  if (env->ExceptionCheck())
+    return -1;
+  for (int band = 0; band < 3; ++band) {
+    for (int point = 0; point < 5; ++point) {
+      const int index = point + 5 * band;
+      const float x = curves[index], y = curves[index + 15];
+      if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || y < 0 ||
+          (point == 0 && (x != 0 || y != 0)) ||
+          (point > 0 && x <= curves[index - 1]))
+        return -1;
+    }
+  }
+  constexpr float corner_correction[3] = {0, 0, 0};
   using Clock = std::chrono::steady_clock;
   const auto start = Clock::now();
   SharpenRgbaToYuv(rgba, count, yuv);
   const auto converted = Clock::now();
   const int result = RunSharpenTo16Bit(
-      yuv, width, height, curves.curves,
-      curves.relative_corner_acutance_correction, attenuation, rgb);
+      yuv, width, height, curves, corner_correction, attenuation, rgb);
   if (result != 0)
     return result;
   const auto sharpened = Clock::now();

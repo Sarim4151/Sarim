@@ -37,17 +37,21 @@ object PhotonSensorSizeTuning {
         changePerAreaStop = 0.033127858f,
     )
 
-    /** Only the capture choice and sensor area are stored, never a core-parameter override. */
+    /** Capture choice survives missing area so fixed sharpening can still be selected. */
     fun captureProperties(enabled: Boolean, sensorPhysicalAreaMm2: Float?): Map<String, String> {
+        if (!enabled) return emptyMap()
         val area = sensorPhysicalAreaMm2?.takeIf { it.isFinite() && it > 0f }
-        return if (enabled && area != null) mapOf(
-            MODEL_PROPERTY to MODEL_ID,
-            SENSOR_AREA_PROPERTY to area.toString(),
-        ) else emptyMap()
+        return buildMap {
+            put(MODEL_PROPERTY, MODEL_ID)
+            if (area != null) put(SENSOR_AREA_PROPERTY, area.toString())
+        }
     }
 
+    fun enabledFromProperties(properties: Map<String, String>): Boolean =
+        properties[MODEL_PROPERTY] == MODEL_ID
+
     fun areaFromProperties(properties: Map<String, String>): Float? =
-        if (properties[MODEL_PROPERTY] == MODEL_ID) {
+        if (enabledFromProperties(properties)) {
             properties[SENSOR_AREA_PROPERTY]?.toFloatOrNull()?.takeIf { it.isFinite() && it > 0f }
         } else null
 

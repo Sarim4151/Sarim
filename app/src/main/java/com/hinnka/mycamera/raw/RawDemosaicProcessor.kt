@@ -22,6 +22,7 @@ import com.hinnka.mycamera.camera.RawBlackBorderCrop
 import com.hinnka.mycamera.data.ContentRepository
 import com.hinnka.mycamera.lut.ChromaDenoiseAlgorithm
 import com.hinnka.mycamera.ml.SharedDepthEstimator
+import com.hinnka.mycamera.processor.PhotonQualitySharpenTuning
 import com.hinnka.mycamera.processor.GlesGpuCompletion
 import com.hinnka.mycamera.processor.GlesGpuScheduler
 import com.hinnka.mycamera.processor.GlesComputeWorkGroup
@@ -228,6 +229,7 @@ class RawDemosaicProcessor {
             mgcDenoiseTuningSnr = baseMetadata?.mgcDenoiseTuningSnr,
             mgcSharpenTuningSnr = baseMetadata?.mgcSharpenTuningSnr,
             mgcSharpenAttenuationScale = baseMetadata?.mgcSharpenAttenuationScale,
+            rawMaxQualityTuningEnabled = baseMetadata?.rawMaxQualityTuningEnabled ?: false,
             rawMaxQualityTuningSensorAreaMm2 = baseMetadata?.rawMaxQualityTuningSensorAreaMm2,
             rotation = dngRawData.rotation,
             profileGainTableMap = baseMetadata?.profileGainTableMap
@@ -1816,6 +1818,7 @@ class RawDemosaicProcessor {
         rawWhiteLevelMode: String? = null,
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningEnabled: Boolean? = null,
         processLocalQualityTuningSensorAreaMm2: Float? = null,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -1864,6 +1867,7 @@ class RawDemosaicProcessor {
                 rawWhiteLevelMode = rawWhiteLevelMode,
                 rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
+                processLocalQualityTuningEnabled = processLocalQualityTuningEnabled,
                 processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
@@ -1915,6 +1919,7 @@ class RawDemosaicProcessor {
         rawWhitePointCorrection: Float = 0f,
         applyLensShadingCorrection: Boolean = true,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningEnabled: Boolean? = null,
         processLocalQualityTuningSensorAreaMm2: Float? = null,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -1957,6 +1962,7 @@ class RawDemosaicProcessor {
                 rawWhitePointCorrection = rawWhitePointCorrection,
                 applyLensShadingCorrection = applyLensShadingCorrection,
                 sharpeningValue = sharpeningValue,
+                processLocalQualityTuningEnabled = processLocalQualityTuningEnabled,
                 processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
@@ -2059,6 +2065,7 @@ class RawDemosaicProcessor {
         rawWhiteLevelMode: String? = null,
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningEnabled: Boolean? = null,
         processLocalQualityTuningSensorAreaMm2: Float? = null,
         processLocalMgcSharpenTuningSnr: Float? = null,
         processLocalMgcSharpenAttenuationScale: Float? = null,
@@ -2109,6 +2116,7 @@ class RawDemosaicProcessor {
                 rawWhiteLevelMode = rawWhiteLevelMode,
                 rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
+                processLocalQualityTuningEnabled = processLocalQualityTuningEnabled,
                 processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
                 processLocalMgcSharpenTuningSnr = processLocalMgcSharpenTuningSnr,
                 processLocalMgcSharpenAttenuationScale = processLocalMgcSharpenAttenuationScale,
@@ -2172,6 +2180,7 @@ class RawDemosaicProcessor {
         rawWhiteLevelMode: String? = null,
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningEnabled: Boolean? = null,
         processLocalQualityTuningSensorAreaMm2: Float? = null,
         denoiseValue: Float? = null,
         chromaDenoiseValue: Float? = null,
@@ -2270,6 +2279,7 @@ class RawDemosaicProcessor {
                 rawWhiteLevelMode = rawWhiteLevelMode,
                 rawCustomWhiteLevel = rawCustomWhiteLevel,
                 sharpeningValue = sharpeningValue,
+                processLocalQualityTuningEnabled = processLocalQualityTuningEnabled,
                 processLocalQualityTuningSensorAreaMm2 = processLocalQualityTuningSensorAreaMm2,
                 denoiseValue = denoiseValue,
                 chromaDenoiseValue = chromaDenoiseValue,
@@ -2329,6 +2339,7 @@ class RawDemosaicProcessor {
         rawWhiteLevelMode: String? = null,
         rawCustomWhiteLevel: Float? = null,
         sharpeningValue: Float = 0f,
+        processLocalQualityTuningEnabled: Boolean? = null,
         processLocalQualityTuningSensorAreaMm2: Float? = null,
         processLocalMgcSharpenTuningSnr: Float? = null,
         processLocalMgcSharpenAttenuationScale: Float? = null,
@@ -2585,6 +2596,8 @@ class RawDemosaicProcessor {
         )
         actualMetadata = actualMetadata?.let {
             it.copy(
+                rawMaxQualityTuningEnabled =
+                    processLocalQualityTuningEnabled ?: it.rawMaxQualityTuningEnabled,
                 rawMaxQualityTuningSensorAreaMm2 =
                     processLocalQualityTuningSensorAreaMm2 ?: it.rawMaxQualityTuningSensorAreaMm2,
             )
@@ -7641,7 +7654,7 @@ class RawDemosaicProcessor {
         stackCompletionTimeline: GpuStackCompletionTimeline? = null,
     ) {
         val sliderValue = RawSharpeningDefaults.normalize(sharpeningValue)
-        val algorithmStrength = RawSharpeningDefaults.toAlgorithmStrength(sliderValue)
+        val algorithmStrength = RawSharpeningDefaults.toMgcStrength(sliderValue)
         val runtimeAttenuation = metadata.mgcSharpenAttenuationScale?.also { attenuation ->
             check(attenuation.isFinite() && attenuation >= 0f) {
                 "MGC sharpen attenuation is invalid: $attenuation"
@@ -7667,11 +7680,16 @@ class RawDemosaicProcessor {
                 height = metadata.height,
                 snr = snr,
                 attenuation = effectiveStrength,
+                tuning = PhotonQualitySharpenTuning.resolve(metadata.rawMaxQualityTuningEnabled),
             )
         } else {
             // Non-MGC GPU-only sources may have no reference RAW/statistics available.
             PLog.w(TAG, "Original MGC sharpen unavailable: missing reference SNR; using GLES USM")
-            renderSharpenPass(metadata, effectiveStrength, inputTextureId)
+            renderSharpenPass(
+                metadata,
+                RawSharpeningDefaults.toAlgorithmStrength(sliderValue) * runtimeAttenuation,
+                inputTextureId,
+            )
         }
     }
 

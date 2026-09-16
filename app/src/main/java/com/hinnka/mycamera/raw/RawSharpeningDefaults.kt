@@ -11,7 +11,10 @@ object RawSharpeningDefaults {
         DEFAULT_STRENGTH
     }
 
-    /** Maps the persisted/UI 0..1 RAW sharpening control onto the algorithm's 0..2 domain. */
+    /** MGC: the default UI value is unity, so 0/.4/1 map to 0/1/2.5. */
+    fun toMgcStrength(value: Float): Float = normalize(value) / DEFAULT_STRENGTH
+
+    /** Maps the persisted/UI 0..1 control onto the legacy GLES USM 0..2 domain. */
     fun toAlgorithmStrength(value: Float): Float =
         normalize(value) * ALGORITHM_STRENGTH_SCALE
 }

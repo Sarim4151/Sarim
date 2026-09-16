@@ -588,6 +588,8 @@ class PhotoProcessor(
             rawWhiteLevelMode = metadata.rawWhiteLevelMode,
             rawCustomWhiteLevel = metadata.rawCustomWhiteLevel,
             sharpeningValue = rawSharpening,
+            processLocalQualityTuningEnabled =
+                PhotonSensorSizeTuning.enabledFromProperties(metadata.customProperties),
             processLocalQualityTuningSensorAreaMm2 =
                 PhotonSensorSizeTuning.areaFromProperties(metadata.customProperties),
             denoiseValue = rawNoiseReduction,
@@ -670,6 +672,8 @@ class PhotoProcessor(
             rawWhiteLevelMode = metadata.rawWhiteLevelMode,
             rawCustomWhiteLevel = metadata.rawCustomWhiteLevel,
             sharpeningValue = finalSharpening,
+            processLocalQualityTuningEnabled =
+                PhotonSensorSizeTuning.enabledFromProperties(metadata.customProperties),
             processLocalQualityTuningSensorAreaMm2 =
                 PhotonSensorSizeTuning.areaFromProperties(metadata.customProperties),
             denoiseValue = finalNoiseReduction,

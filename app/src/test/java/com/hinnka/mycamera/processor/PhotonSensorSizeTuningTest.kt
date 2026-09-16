@@ -2,6 +2,8 @@ package com.hinnka.mycamera.processor
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.log2
 
@@ -129,8 +131,26 @@ class PhotonSensorSizeTuningTest {
         assertNull(PhotonSensorSizeTuning.forSensorAreaMm2(0f))
         assertEquals(PhotonSensorSizeTuning.Parameters(), PhotonSensorSizeTuning.resolve(null))
         assertEquals(PhotonSensorSizeTuning.Parameters(), PhotonSensorSizeTuning.resolve(Float.NaN))
-        assertEquals(emptyMap<String, String>(), PhotonSensorSizeTuning.captureProperties(true, null))
-        assertEquals(emptyMap<String, String>(), PhotonSensorSizeTuning.captureProperties(true, Float.POSITIVE_INFINITY))
+        for (area in listOf(null, Float.POSITIVE_INFINITY)) {
+            val properties = PhotonSensorSizeTuning.captureProperties(true, area)
+            assertTrue(PhotonSensorSizeTuning.enabledFromProperties(properties))
+            assertNull(PhotonSensorSizeTuning.areaFromProperties(properties))
+            assertEquals(1, properties.size)
+        }
+    }
+
+    @Test
+    fun fixedSharpeningUsesCaptureChoiceEvenWhenSensorAreaIsMissing() {
+        for (area in listOf(null, Float.NaN, 0f, 1f, 20.48f, 32f, 128f, 1000f)) {
+            val enabled = PhotonSensorSizeTuning.captureProperties(true, area)
+            val disabled = PhotonSensorSizeTuning.captureProperties(false, area)
+            assertSame(PhotonQualitySharpenTuning.FIXED, PhotonQualitySharpenTuning.resolve(
+                PhotonSensorSizeTuning.enabledFromProperties(enabled),
+            ))
+            assertSame(PhotonCoreImagingTuning.sharpen, PhotonQualitySharpenTuning.resolve(
+                PhotonSensorSizeTuning.enabledFromProperties(disabled),
+            ))
+        }
     }
 
     companion object {
