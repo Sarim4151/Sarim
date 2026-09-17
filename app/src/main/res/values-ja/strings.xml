@@ -1132,4 +1132,16 @@
     <string name="settings_shutter_sound_import_failed">この音声を読み込めません。3秒以内、48 kHz、モノラルまたはステレオで、再生可能なクリップを選択してください（最大10 MB）。</string>
     <string name="settings_shutter_sound_save_failed">サウンド設定を保存できません。もう一度お試しください。</string>
     <string name="settings_shutter_sound_preview_failed">この音声を再生できません。もう一度読み込むか、デフォルトに戻してください。</string>
+    <string name="settings_raw_color_engine_canon">Canon</string>
+    <string name="settings_raw_color_engine_canon_description">Canon ピクチャースタイルの色と階調。</string>
+    <string name="settings_raw_canon_picture_style">ピクチャースタイル</string>
+    <string name="settings_raw_canon_picture_style_description">Canonのピクチャースタイルを選択します。初期設定はスタンダードです。</string>
+    <string name="settings_raw_canon_style_standard">スタンダード</string>
+    <string name="settings_raw_canon_style_portrait">ポートレート</string>
+    <string name="settings_raw_canon_style_landscape">風景</string>
+    <string name="settings_raw_canon_style_neutral">ニュートラル</string>
+    <string name="settings_raw_canon_style_faithful">忠実設定</string>
+    <string name="settings_raw_canon_style_monochrome">モノクロ</string>
+    <string name="settings_raw_canon_exposure_compensation">Canon 露出補正（EV）</string>
+    <string name="settings_raw_canon_exposure_compensation_description">通常の露出補正に加えて、Canonレンダリングの露出を調整します。</string>
 </resources>

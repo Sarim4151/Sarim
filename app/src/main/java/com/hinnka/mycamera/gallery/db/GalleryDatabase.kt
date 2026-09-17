@@ -8,7 +8,7 @@ import com.hinnka.mycamera.raw.RawToneMappingParameters
 
 @Database(
     entities = [GalleryMediaEntity::class],
-    version = 43,
+    version = 45,
     exportSchema = false
 )
 @androidx.room.TypeConverters(GalleryConverters::class)
@@ -792,6 +792,18 @@ abstract class GalleryDatabase : RoomDatabase() {
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_gallery_media_mediaType` ON `gallery_media` (`mediaType`)")
         }
 
+        private val MIGRATION_43_44 = object : androidx.room.migration.Migration(43, 44) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawCanonPictureStyle TEXT NOT NULL DEFAULT 'standard'")
+            }
+        }
+
+        private val MIGRATION_44_45 = object : androidx.room.migration.Migration(44, 45) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE gallery_media ADD COLUMN rawCanonExposureCompensationEv REAL NOT NULL DEFAULT -0.5")
+            }
+        }
+
         fun getInstance(context: Context): GalleryDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -841,7 +853,9 @@ abstract class GalleryDatabase : RoomDatabase() {
                         MIGRATION_39_40,
                         MIGRATION_40_41,
                         MIGRATION_41_42,
-                        MIGRATION_42_43
+                        MIGRATION_42_43,
+                        MIGRATION_43_44,
+                        MIGRATION_44_45
                     )
                     .fallbackToDestructiveMigrationOnDowngrade(false)
                     .fallbackToDestructiveMigration(false)

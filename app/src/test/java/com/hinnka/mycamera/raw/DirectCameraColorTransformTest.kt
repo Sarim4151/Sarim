@@ -24,6 +24,20 @@ class DirectCameraColorTransformTest {
             0.4594f, 0.3471f, 0.1578f, 0.2504f, 0.7023f, 0.0473f, 0.1023f, 0.0032f, 0.7195f,
         ),
     ).toDcpProfile()
+
+    // ColorMatrix tags only from the bundled EOS R5 calibration; no DCP look/tone data.
+    private val canonProfile = RawCameraCalibration(
+        colorMatrix1 = floatArrayOf(
+            1.16f, -0.6048f, 0.0405f, -0.3331f, 1.0643f, 0.3113f,
+            -0.0007f, 0.0513f, 0.6109f,
+        ),
+        colorMatrix2 = floatArrayOf(
+            0.9766f, -0.2953f, -0.1254f, -0.4276f, 1.2116f, 0.2433f,
+            -0.0437f, 0.1336f, 0.5131f,
+        ),
+        calibrationIlluminant1 = 17,
+        calibrationIlluminant2 = 21,
+    ).toDcpProfile()
     private val whites = listOf(
         floatArrayOf(0.44757f, 0.40745f),
         floatArrayOf(0.3369536f, 0.35767f), // logged S9 RW2 as-shot white
@@ -44,7 +58,7 @@ class DirectCameraColorTransformTest {
 
     @Test
     fun sharedSpaceIsColorimetricAndPhotoStyleReceivesCameraRgbWithOneWhiteBalance() {
-        for (profile in listOf(profile, hncsProfile)) for (white in whites) {
+        for (profile in listOf(profile, hncsProfile, canonProfile)) for (white in whites) {
             val transform = DirectCameraColorTransform.fromProfile(profile, white)
             val sensorToProfile = transform.sensorToProPhoto(wb)
             val recovered = DngSdkColorSpec.multiplyMatrix3x3(
@@ -66,7 +80,7 @@ class DirectCameraColorTransformTest {
             floatArrayOf(-0.01f, 0.3f, 2f),
             floatArrayOf(8f, 16f, 4f),
         )
-        for (profile in listOf(profile, hncsProfile)) for (white in whites) {
+        for (profile in listOf(profile, hncsProfile, canonProfile)) for (white in whites) {
             val transform = DirectCameraColorTransform.fromProfile(profile, white)
             for (sample in samples) for (gain in listOf(1f, 0.25f, 3.5f)) {
                 val working = multiply(transform.sensorToProPhoto(wb), sample)
@@ -104,7 +118,7 @@ class DirectCameraColorTransformTest {
 
     @Test
     fun matchingSourceAndTargetRecoverWhiteBalancedSensorRgbWithoutDcpLook() {
-        for (profile in listOf(profile, hncsProfile)) {
+        for (profile in listOf(profile, hncsProfile, canonProfile)) {
             val metadata = RawMetadata(
                 width = 16,
                 height = 16,

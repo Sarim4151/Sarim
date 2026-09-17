@@ -8,10 +8,12 @@ import com.hinnka.mycamera.raw.HncsFilmCurveMode
 import com.hinnka.mycamera.raw.HncsRenderIntent
 import com.hinnka.mycamera.raw.HncsProfileManager
 import com.hinnka.mycamera.raw.LumixPhotoStyle
+import com.hinnka.mycamera.raw.CanonPictureStyle
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawDenoiseDefaults
 import com.hinnka.mycamera.raw.RawSharpeningDefaults
 import com.hinnka.mycamera.raw.RawProcessingPreferences
+import com.hinnka.mycamera.raw.RawToneMappingParameters
 
 /**
  * Tolerant preset reader: only current CameraPreset fields are parsed.
@@ -85,6 +87,10 @@ internal object CameraPresetJsonCodec {
             rawWhitePointCorrection = obj.float("rawWhitePointCorrection", 0f)
                 .coerceIn(-1f, 1f),
             rawLumixPhotoStyle = LumixPhotoStyle.fromPersistedValue(obj.stringOrNull("rawLumixPhotoStyle")).assetName,
+            rawCanonPictureStyle = CanonPictureStyle.fromPersistedValue(obj.stringOrNull("rawCanonPictureStyle")).persistedValue,
+            rawCanonExposureCompensationEv = RawToneMappingParameters.normalizeCanonExposureCompensation(
+                obj.float("rawCanonExposureCompensationEv", RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_DEFAULT)
+            ),
             rawLumixColorMatchingEnabled = obj.boolean("rawLumixColorMatchingEnabled", true),
             rawHncsColorMatchingEnabled = obj.boolean("rawHncsColorMatchingEnabled", true),
             rawOppoMasterToneMap = obj.boolean("rawOppoMasterToneMap", false),

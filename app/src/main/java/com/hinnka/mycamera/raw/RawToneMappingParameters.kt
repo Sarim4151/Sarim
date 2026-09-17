@@ -11,12 +11,19 @@ data class RawToneMappingParameters(
     val useOppoMasterToneMap: Boolean = false,
     val usePhotonHdr: Boolean = PHOTON_HDR_DEFAULT,
     val lumixPhotoStyle: LumixPhotoStyle = LumixPhotoStyle.Standard,
+    val canonPictureStyle: CanonPictureStyle = CanonPictureStyle.Standard,
+    val canonExposureCompensationEv: Float = CANON_EXPOSURE_COMPENSATION_DEFAULT,
     val lumixColorMatchingEnabled: Boolean = true,
     val hncsColorMatchingEnabled: Boolean = true,
 ) {
+    /** Explicit engine adjustment, applied once after PGTM with the shared render exposure. */
+    fun engineExposureCompensationEv(engine: RawRenderingEngine): Float =
+        if (engine.isCanon) normalizeCanonExposureCompensation(canonExposureCompensationEv) else 0f
+
     fun colorMatchingEnabled(engine: RawRenderingEngine): Boolean = when {
         engine.isLumix -> lumixColorMatchingEnabled
         engine.isHncs -> hncsColorMatchingEnabled
+        engine.isCanon -> true
         else -> false
     }
 
@@ -45,6 +52,7 @@ data class RawToneMappingParameters(
             FILMIC_WHITE_RELATIVE_EXPOSURE_MAX
         )
         return copy(
+            canonExposureCompensationEv = normalizeCanonExposureCompensation(canonExposureCompensationEv),
             agxBlackRelativeExposure = minOf(blackAgx, whiteAgx - MIN_DYNAMIC_RANGE_EV),
             agxWhiteRelativeExposure = maxOf(whiteAgx, blackAgx + MIN_DYNAMIC_RANGE_EV),
             agxToe = agxToe.coerceIn(AGX_TOE_MIN, AGX_TOE_MAX),
@@ -72,6 +80,14 @@ data class RawToneMappingParameters(
     }
 
     companion object {
+        const val CANON_EXPOSURE_COMPENSATION_DEFAULT = -0.5f
+        const val CANON_EXPOSURE_COMPENSATION_MIN = -4f
+        const val CANON_EXPOSURE_COMPENSATION_MAX = 4f
+
+        fun normalizeCanonExposureCompensation(value: Float): Float =
+            if (value.isFinite()) value.coerceIn(CANON_EXPOSURE_COMPENSATION_MIN, CANON_EXPOSURE_COMPENSATION_MAX)
+            else CANON_EXPOSURE_COMPENSATION_DEFAULT
+
         const val PHOTON_HDR_DEFAULT = true
         const val MIN_DYNAMIC_RANGE_EV = 0.2f
 

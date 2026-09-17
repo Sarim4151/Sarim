@@ -33,6 +33,13 @@ enum class RawRenderingEngine(
         defaultExposureCompensationEv = 0f,
         exposureCompensationDomain = RawExposureCompensationDomain.Linear
     ),
+    Canon(
+        shaderId = 8,
+        // Output/adjustment space; the renderer owns its Picture Style input domain.
+        workingColorSpace = ColorSpace.SRGB,
+        defaultExposureCompensationEv = 0f,
+        exposureCompensationDomain = RawExposureCompensationDomain.Linear
+    ),
     AgX(
         shaderId = 1,
         workingColorSpace = ColorSpace.BT2020,
@@ -64,6 +71,12 @@ enum class RawRenderingEngine(
 
     val isLumix: Boolean
         get() = this == Lumix
+
+    val isCanon: Boolean
+        get() = this == Canon
+
+    val usesCameraInputDomain: Boolean
+        get() = isLumix || isHncs || isCanon
 
     companion object {
         fun fromPersistedName(

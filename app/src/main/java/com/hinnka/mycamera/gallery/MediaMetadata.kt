@@ -18,6 +18,7 @@ import com.hinnka.mycamera.raw.HncsFilmCurveMode
 import com.hinnka.mycamera.raw.HncsRenderIntent
 import com.hinnka.mycamera.raw.HncsProfileManager
 import com.hinnka.mycamera.raw.LumixPhotoStyle
+import com.hinnka.mycamera.raw.CanonPictureStyle
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.RawCaptureExposureCompensationMetadata
@@ -388,6 +389,11 @@ data class MediaMetadata(
                             true
                         },
                         lumixPhotoStyle = LumixPhotoStyle.fromPersistedValue(obj.optString("rawLumixPhotoStyle")),
+                        canonPictureStyle = CanonPictureStyle.fromPersistedValue(obj.optString("rawCanonPictureStyle")),
+                        canonExposureCompensationEv = obj.optDouble(
+                            "rawCanonExposureCompensationEv",
+                            RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_DEFAULT.toDouble()
+                        ).toFloat(),
                         lumixColorMatchingEnabled = obj.optBoolean("rawLumixColorMatchingEnabled", true),
                         hncsColorMatchingEnabled = obj.optBoolean("rawHncsColorMatchingEnabled", true),
                         useOppoMasterToneMap = obj.optBoolean("rawOppoMasterToneMap", false),

@@ -6,6 +6,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.hinnka.mycamera.model.ColorRecipeParams
+import com.hinnka.mycamera.raw.RawToneMappingParameters
 
 @Entity(
     tableName = "gallery_media",
@@ -63,6 +64,10 @@ data class GalleryMediaEntity(
     val rawColorEngine: String,
     @ColumnInfo(defaultValue = "'standard'")
     val rawLumixPhotoStyle: String = "standard",
+    @ColumnInfo(defaultValue = "'standard'")
+    val rawCanonPictureStyle: String = "standard",
+    @ColumnInfo(defaultValue = "-0.5")
+    val rawCanonExposureCompensationEv: Float = RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_DEFAULT,
     @ColumnInfo(defaultValue = "1")
     val rawLumixColorMatchingEnabled: Boolean = true,
     @ColumnInfo(defaultValue = "1")

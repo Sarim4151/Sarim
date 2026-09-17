@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.model
 
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.raw.CanonPictureStyle
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawDenoiseDefaults
 import org.junit.Assert.assertEquals
@@ -10,6 +11,66 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CameraPresetJsonCodecTest {
+    @Test
+    fun canonPictureStylesSurviveSingleAndListPresetRoundTrips() {
+        val base = requireNotNull(CameraPreset.fromJson("""{"id":"canon","name":"Canon"}"""))
+        val persistedStyles = listOf("standard", "portrait", "landscape", "neutral", "faithful", "monochrome")
+        val sources = persistedStyles.mapIndexed { index, style ->
+            base.copy(
+                id = "canon_$style",
+                rawRenderingEngine = RawRenderingEngine.Canon.name,
+                rawCanonPictureStyle = style,
+                rawCanonExposureCompensationEv = -2f + index * 0.5f,
+                rawExposureCompensation = 0.75f,
+            )
+        }
+
+        for (source in sources) {
+            val restored = requireNotNull(CameraPreset.fromJson(source.toJson()))
+            assertEquals(source.rawCanonPictureStyle, restored.rawCanonPictureStyle)
+            assertEquals(source.rawCanonExposureCompensationEv, restored.rawCanonExposureCompensationEv, 0f)
+            assertEquals(0.75f, restored.rawExposureCompensation, 0f)
+            assertEquals(source.rawRenderingEngine, restored.rawRenderingEngine)
+        }
+
+        val restoredList = CameraPreset.listFromJson(sources.joinToString(prefix = "[", postfix = "]") { it.toJson() })
+        assertEquals(persistedStyles, restoredList.map { it.rawCanonPictureStyle })
+        assertEquals(sources.map { it.rawCanonExposureCompensationEv }, restoredList.map { it.rawCanonExposureCompensationEv })
+    }
+
+    @Test
+    fun legacyPresetWithoutCanonStyleDefaultsToStandardOnResave() {
+        val legacy = requireNotNull(CameraPreset.fromJson("""{"id":"legacy","name":"Legacy"}"""))
+
+        assertEquals(CanonPictureStyle.Standard.persistedValue, legacy.rawCanonPictureStyle)
+        assertEquals(-0.5f, legacy.rawCanonExposureCompensationEv, 0f)
+        val restored = requireNotNull(CameraPreset.fromJson(legacy.toJson()))
+        assertEquals("standard", restored.rawCanonPictureStyle)
+        assertEquals(-0.5f, restored.rawCanonExposureCompensationEv, 0f)
+    }
+
+    @Test
+    fun canonExposureIsNormalizedBeforeWritingAndAfterReadingPresets() {
+        val base = requireNotNull(CameraPreset.fromJson("""{"id":"canon"}"""))
+        for ((input, expected) in listOf(-10f to -4f, 10f to 4f, Float.NaN to -0.5f, Float.POSITIVE_INFINITY to -0.5f)) {
+            val saved = base.copy(rawCanonExposureCompensationEv = input).toJson()
+            val restored = requireNotNull(CameraPreset.fromJson(saved))
+            assertEquals(expected, restored.rawCanonExposureCompensationEv, 0f)
+        }
+        for ((jsonValue, expected) in listOf("-10" to -4f, "10" to 4f, "null" to -0.5f, "\"invalid\"" to -0.5f)) {
+            val restored = requireNotNull(CameraPreset.fromJson("""{"id":"canon","rawCanonExposureCompensationEv":$jsonValue}"""))
+            assertEquals(expected, restored.rawCanonExposureCompensationEv, 0f)
+        }
+    }
+
+    @Test
+    fun unsupportedCanonStyleUsesExistingPresetCompatibilityDefault() {
+        val preset = requireNotNull(CameraPreset.fromJson("""{"id":"future","rawCanonPictureStyle":"future_style"}"""))
+
+        assertEquals("standard", preset.rawCanonPictureStyle)
+        assertEquals("standard", requireNotNull(CameraPreset.fromJson(preset.toJson())).rawCanonPictureStyle)
+    }
+
     @Test
     fun colorMatchingPreservesIndependentSwitchesAndDefaultsForOldPresets() {
         val legacy = requireNotNull(CameraPreset.fromJson("""{"id":"legacy","name":"Legacy"}"""))

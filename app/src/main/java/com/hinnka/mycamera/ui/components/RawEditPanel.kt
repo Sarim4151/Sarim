@@ -42,6 +42,7 @@ import com.hinnka.mycamera.raw.RawAdaptiveExposureMode
 import com.hinnka.mycamera.raw.RawProcessingPreferences.DROMode
 import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.raw.LumixPhotoStyle
+import com.hinnka.mycamera.raw.CanonPictureStyle
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
@@ -402,6 +403,26 @@ fun RawRenderingEngineSettingsPanel(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
+        if (rawRenderingEngine.isCanon) {
+            CanonPictureStyleSelector(
+                selectedStyle = rawToneMappingParameters.canonPictureStyle,
+                onSelectStyle = {
+                    onAdjustmentStart()
+                    onRawToneMappingParametersChange(rawToneMappingParameters.copy(canonPictureStyle = it))
+                    onAdjustmentEnd()
+                },
+            )
+            CanonExposureCompensationSetting(
+                value = rawToneMappingParameters.canonExposureCompensationEv,
+                onValueChange = {
+                    onAdjustmentStart()
+                    onRawToneMappingParametersChange(rawToneMappingParameters.copy(canonExposureCompensationEv = it))
+                },
+                onValueChangeFinished = onAdjustmentEnd,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
         if (rawRenderingEngine == RawRenderingEngine.AdobeCurve) {
             RawDcpSelector(
                 selectedDcpId = selectedDcpId,
@@ -547,7 +568,6 @@ fun LumixPhotoStyleSelector(
     selectedStyle: LumixPhotoStyle,
     onSelectStyle: (LumixPhotoStyle) -> Unit,
 ) {
-    var showDialog by remember { mutableStateOf(false) }
     val title = stringResource(R.string.settings_raw_lumix_photo_style)
     val labels = LumixPhotoStyle.entries.associateWith { style ->
         stringResource(when (style) {
@@ -569,6 +589,72 @@ fun LumixPhotoStyleSelector(
             LumixPhotoStyle.VLog -> R.string.settings_raw_lumix_style_vlog
         })
     }
+    RawPhotoStyleSelector(
+        title = title,
+        description = stringResource(R.string.settings_raw_lumix_photo_style_description),
+        styles = LumixPhotoStyle.entries,
+        styleKey = { it.assetName },
+        labels = labels,
+        selectedStyle = selectedStyle,
+        onSelectStyle = onSelectStyle,
+    )
+}
+
+@Composable
+fun CanonPictureStyleSelector(
+    selectedStyle: CanonPictureStyle,
+    onSelectStyle: (CanonPictureStyle) -> Unit,
+) {
+    val labels = CanonPictureStyle.entries.associateWith { style ->
+        stringResource(when (style) {
+            CanonPictureStyle.Standard -> R.string.settings_raw_canon_style_standard
+            CanonPictureStyle.Portrait -> R.string.settings_raw_canon_style_portrait
+            CanonPictureStyle.Landscape -> R.string.settings_raw_canon_style_landscape
+            CanonPictureStyle.Neutral -> R.string.settings_raw_canon_style_neutral
+            CanonPictureStyle.Faithful -> R.string.settings_raw_canon_style_faithful
+            CanonPictureStyle.Monochrome -> R.string.settings_raw_canon_style_monochrome
+        })
+    }
+    RawPhotoStyleSelector(
+        title = stringResource(R.string.settings_raw_canon_picture_style),
+        description = stringResource(R.string.settings_raw_canon_picture_style_description),
+        styles = CanonPictureStyle.entries,
+        styleKey = { it.persistedValue },
+        labels = labels,
+        selectedStyle = selectedStyle,
+        onSelectStyle = onSelectStyle,
+    )
+}
+
+@Composable
+fun CanonExposureCompensationSetting(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: (() -> Unit)? = null,
+) {
+    SliderSettingItem(
+        title = stringResource(R.string.settings_raw_canon_exposure_compensation),
+        description = stringResource(R.string.settings_raw_canon_exposure_compensation_description),
+        value = value,
+        valueRange = RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_MIN..
+            RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_MAX,
+        resetValue = RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_DEFAULT,
+        onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
+    )
+}
+
+@Composable
+private fun <T> RawPhotoStyleSelector(
+    title: String,
+    description: String,
+    styles: List<T>,
+    styleKey: (T) -> String,
+    labels: Map<T, String>,
+    selectedStyle: T,
+    onSelectStyle: (T) -> Unit,
+) {
+    var showDialog by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -580,7 +666,7 @@ fun LumixPhotoStyleSelector(
             Text(title, color = Color.White, fontSize = 16.sp)
             Spacer(Modifier.height(2.dp))
             Text(
-                stringResource(R.string.settings_raw_lumix_photo_style_description),
+                description,
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -616,13 +702,13 @@ fun LumixPhotoStyleSelector(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                     )
-                    val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedStyle.ordinal)
+                    val listState = rememberLazyListState(initialFirstVisibleItemIndex = styles.indexOf(selectedStyle))
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.weight(1f, fill = false).fillMaxWidth().selectableGroup(),
                         contentPadding = PaddingValues(horizontal = 12.dp),
                     ) {
-                        items(LumixPhotoStyle.entries, key = { it.assetName }) { style ->
+                        items(styles, key = styleKey) { style ->
                             val selected = style == selectedStyle
                             Row(
                                 modifier = Modifier
@@ -888,7 +974,8 @@ private fun RawToneMappingControls(
     when (rawRenderingEngine) {
         RawRenderingEngine.AdobeCurve,
         RawRenderingEngine.Hncs,
-        RawRenderingEngine.Lumix -> Unit
+        RawRenderingEngine.Lumix,
+        RawRenderingEngine.Canon -> Unit
 
         RawRenderingEngine.AgX -> {
             SliderSettingItem(
@@ -1265,6 +1352,7 @@ private fun rawRenderingEngineName(engine: RawRenderingEngine): String {
         RawRenderingEngine.Spektrafilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
         RawRenderingEngine.Hncs -> stringResource(R.string.settings_raw_color_engine_hncs)
         RawRenderingEngine.Lumix -> stringResource(R.string.settings_raw_color_engine_lumix)
+        RawRenderingEngine.Canon -> stringResource(R.string.settings_raw_color_engine_canon)
     }
 }
 
@@ -1278,6 +1366,7 @@ private fun rawColorEngineDescription(engine: RawRenderingEngine): String {
         RawRenderingEngine.Spektrafilm -> stringResource(R.string.settings_raw_color_engine_spectral_film_description)
         RawRenderingEngine.Hncs -> stringResource(R.string.settings_raw_color_engine_hncs_description)
         RawRenderingEngine.Lumix -> stringResource(R.string.settings_raw_color_engine_lumix_description)
+        RawRenderingEngine.Canon -> stringResource(R.string.settings_raw_color_engine_canon_description)
     }
 }
 

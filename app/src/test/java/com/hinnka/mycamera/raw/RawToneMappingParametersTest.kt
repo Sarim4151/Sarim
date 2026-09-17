@@ -6,6 +6,26 @@ import org.junit.Test
 
 class RawToneMappingParametersTest {
     @Test
+    fun canonExposureAppliesOnlyToCanonAcrossStylesAndHdrModes() {
+        for (style in CanonPictureStyle.entries) {
+            for (hdr in listOf(false, true)) {
+                val parameters = RawToneMappingParameters(canonPictureStyle = style, usePhotonHdr = hdr)
+                for (engine in RawRenderingEngine.entries) {
+                    assertEquals(
+                        if (engine.isCanon) -0.5f else 0f,
+                        parameters.engineExposureCompensationEv(engine), 0f,
+                    )
+                    assertEquals(
+                        if (engine.isCanon) 0.75f else 0f,
+                        parameters.copy(canonExposureCompensationEv = 0.75f)
+                            .engineExposureCompensationEv(engine), 0f,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
     fun photonHdrIsIndependentFromAdobeProfileToneMap() {
         val parameters = RawToneMappingParameters.DEFAULT
             .withPhotonHdr(true)

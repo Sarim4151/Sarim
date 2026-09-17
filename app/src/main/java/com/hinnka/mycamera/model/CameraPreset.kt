@@ -7,9 +7,11 @@ import com.hinnka.mycamera.raw.HncsFilmCurveMode
 import com.hinnka.mycamera.raw.HncsRenderIntent
 import com.hinnka.mycamera.raw.HncsProfileManager
 import com.hinnka.mycamera.raw.LumixPhotoStyle
+import com.hinnka.mycamera.raw.CanonPictureStyle
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawDenoiseDefaults
 import com.hinnka.mycamera.raw.RawSharpeningDefaults
+import com.hinnka.mycamera.raw.RawToneMappingParameters
 
 /**
  * 拍摄预设。通用画面参数适用于全部拍摄模式，RAW 参数仅适用于专业模式。
@@ -41,6 +43,8 @@ data class CameraPreset(
     val rawWhitePointCorrection: Float = 0f,
     val rawOppoMasterToneMap: Boolean = false,
     val rawLumixPhotoStyle: String = LumixPhotoStyle.Standard.assetName,
+    val rawCanonPictureStyle: String = CanonPictureStyle.Standard.persistedValue,
+    val rawCanonExposureCompensationEv: Float = RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_DEFAULT,
     val rawLumixColorMatchingEnabled: Boolean = true,
     val rawHncsColorMatchingEnabled: Boolean = true,
     val rawSpectralFilmStock: String? = null,
@@ -148,6 +152,10 @@ data class CameraPreset(
                 rawWhitePointCorrection = rawWhitePointCorrection.coerceIn(-1f, 1f),
                 rawOppoMasterToneMap = rawOppoMasterToneMap,
                 rawLumixPhotoStyle = LumixPhotoStyle.fromPersistedValue(rawLumixPhotoStyle).assetName,
+                rawCanonPictureStyle = CanonPictureStyle.fromPersistedValue(rawCanonPictureStyle).persistedValue,
+                rawCanonExposureCompensationEv = RawToneMappingParameters.normalizeCanonExposureCompensation(
+                    rawCanonExposureCompensationEv
+                ),
             )
     }
 

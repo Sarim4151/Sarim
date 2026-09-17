@@ -79,6 +79,7 @@ import com.hinnka.mycamera.raw.RawCaptureExposureCompensationMetadata
 import com.hinnka.mycamera.raw.RawDemosaicProcessor
 import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.raw.LumixPhotoStyle
+import com.hinnka.mycamera.raw.CanonPictureStyle
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawDenoiseDefaults
 import com.hinnka.mycamera.raw.RawSharpeningDefaults
@@ -261,6 +262,8 @@ private data class PresetMatchSnapshot(
     val rawWhitePointCorrection: Float,
     val rawOppoMasterToneMap: Boolean,
     val rawLumixPhotoStyle: LumixPhotoStyle,
+    val rawCanonPictureStyle: CanonPictureStyle,
+    val rawCanonExposureCompensationEv: Float,
     val rawLumixColorMatchingEnabled: Boolean,
     val rawHncsColorMatchingEnabled: Boolean,
     val rawSpectralFilmStock: String?,
@@ -300,6 +303,8 @@ private data class PresetMatchSnapshot(
             rawBlackPointCorrection == preset.rawBlackPointCorrection &&
             rawWhitePointCorrection == preset.rawWhitePointCorrection &&
             rawLumixPhotoStyle == LumixPhotoStyle.fromPersistedValue(preset.rawLumixPhotoStyle) &&
+            rawCanonPictureStyle == CanonPictureStyle.fromPersistedValue(preset.rawCanonPictureStyle) &&
+            rawCanonExposureCompensationEv == preset.rawCanonExposureCompensationEv &&
             rawLumixColorMatchingEnabled == preset.rawLumixColorMatchingEnabled &&
             rawHncsColorMatchingEnabled == preset.rawHncsColorMatchingEnabled &&
             rawOppoMasterToneMap == preset.rawOppoMasterToneMap &&
@@ -395,6 +400,12 @@ private data class PresetMatchSnapshot(
                 }
                 if (rawLumixPhotoStyle != LumixPhotoStyle.fromPersistedValue(preset.rawLumixPhotoStyle)) {
                     add("rawLumixPhotoStyle current=$rawLumixPhotoStyle preset=${preset.rawLumixPhotoStyle}")
+                }
+                if (rawCanonPictureStyle != CanonPictureStyle.fromPersistedValue(preset.rawCanonPictureStyle)) {
+                    add("rawCanonPictureStyle current=$rawCanonPictureStyle preset=${preset.rawCanonPictureStyle}")
+                }
+                if (rawCanonExposureCompensationEv != preset.rawCanonExposureCompensationEv) {
+                    add("rawCanonExposureCompensationEv current=$rawCanonExposureCompensationEv preset=${preset.rawCanonExposureCompensationEv}")
                 }
                 if (rawLumixColorMatchingEnabled != preset.rawLumixColorMatchingEnabled ||
                     rawHncsColorMatchingEnabled != preset.rawHncsColorMatchingEnabled
@@ -496,6 +507,8 @@ private data class CameraFeatureUpdate(
     val rawProfileToneMapMode: SettingValue<RawProfileToneMapMode>? = null,
     val rawOppoMasterToneMap: SettingValue<Boolean>? = null,
     val rawLumixPhotoStyle: SettingValue<LumixPhotoStyle>? = null,
+    val rawCanonPictureStyle: SettingValue<CanonPictureStyle>? = null,
+    val rawCanonExposureCompensationEv: SettingValue<Float>? = null,
     val rawLumixColorMatchingEnabled: SettingValue<Boolean>? = null,
     val rawHncsColorMatchingEnabled: SettingValue<Boolean>? = null,
     val rawSpectralFilmStock: SettingValue<String?>? = null,
@@ -649,6 +662,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             rawWhitePointCorrection = saved.rawWhitePointCorrection,
                             rawOppoMasterToneMap = saved.rawOppoMasterToneMap,
                             rawLumixPhotoStyle = saved.rawLumixPhotoStyle,
+                            rawCanonPictureStyle = saved.rawCanonPictureStyle,
+                            rawCanonExposureCompensationEv = saved.rawCanonExposureCompensationEv,
                             rawLumixColorMatchingEnabled = saved.rawLumixColorMatchingEnabled,
                             rawHncsColorMatchingEnabled = saved.rawHncsColorMatchingEnabled,
                             rawSpectralFilmStock = saved.rawSpectralFilmStock,
@@ -784,6 +799,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawWhitePointCorrection = userPreferences.value.rawWhitePointCorrection,
             rawOppoMasterToneMap = rawToneMappingParameters.value.useOppoMasterToneMap,
             rawLumixPhotoStyle = rawToneMappingParameters.value.lumixPhotoStyle.assetName,
+            rawCanonPictureStyle = rawToneMappingParameters.value.canonPictureStyle.persistedValue,
+            rawCanonExposureCompensationEv = rawToneMappingParameters.value.canonExposureCompensationEv,
             rawLumixColorMatchingEnabled = rawToneMappingParameters.value.lumixColorMatchingEnabled,
             rawHncsColorMatchingEnabled = rawToneMappingParameters.value.hncsColorMatchingEnabled,
             rawSpectralFilmStock = rawSpectralFilmStock.value,
@@ -892,6 +909,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawWhitePointCorrection = SettingValue(this?.rawWhitePointCorrection ?: 0f),
             rawOppoMasterToneMap = SettingValue(this?.rawOppoMasterToneMap ?: false),
             rawLumixPhotoStyle = SettingValue(LumixPhotoStyle.fromPersistedValue(this?.rawLumixPhotoStyle)),
+            rawCanonPictureStyle = SettingValue(CanonPictureStyle.fromPersistedValue(this?.rawCanonPictureStyle)),
+            rawCanonExposureCompensationEv = SettingValue(this?.rawCanonExposureCompensationEv
+                ?: RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_DEFAULT),
             rawLumixColorMatchingEnabled = SettingValue(this?.rawLumixColorMatchingEnabled ?: true),
             rawHncsColorMatchingEnabled = SettingValue(this?.rawHncsColorMatchingEnabled ?: true),
             rawSpectralFilmStock = SettingValue(this?.rawSpectralFilmStock),
@@ -1031,6 +1051,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val rawToneMappingUpdate = if (
             update.rawProfileToneMapMode != null ||
             update.rawOppoMasterToneMap != null || update.rawLumixPhotoStyle != null ||
+            update.rawCanonPictureStyle != null || update.rawCanonExposureCompensationEv != null ||
             update.rawLumixColorMatchingEnabled != null || update.rawHncsColorMatchingEnabled != null
         ) {
             var toneMappingParameters = prefs.rawToneMappingParameters
@@ -1042,6 +1063,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
             update.rawLumixPhotoStyle?.let {
                 toneMappingParameters = toneMappingParameters.copy(lumixPhotoStyle = it.value)
+            }
+            update.rawCanonPictureStyle?.let {
+                toneMappingParameters = toneMappingParameters.copy(canonPictureStyle = it.value)
+            }
+            update.rawCanonExposureCompensationEv?.let {
+                toneMappingParameters = toneMappingParameters.copy(canonExposureCompensationEv = it.value)
             }
             update.rawLumixColorMatchingEnabled?.let {
                 toneMappingParameters = toneMappingParameters.copy(lumixColorMatchingEnabled = it.value)
@@ -1322,6 +1349,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawWhitePointCorrection = prefs.rawWhitePointCorrection,
             rawOppoMasterToneMap = prefs.rawToneMappingParameters.useOppoMasterToneMap,
             rawLumixPhotoStyle = prefs.rawToneMappingParameters.lumixPhotoStyle,
+            rawCanonPictureStyle = prefs.rawToneMappingParameters.canonPictureStyle,
+            rawCanonExposureCompensationEv = prefs.rawToneMappingParameters.canonExposureCompensationEv,
             rawLumixColorMatchingEnabled = prefs.rawToneMappingParameters.lumixColorMatchingEnabled,
             rawHncsColorMatchingEnabled = prefs.rawToneMappingParameters.hncsColorMatchingEnabled,
             rawSpectralFilmStock = prefs.rawSpectralFilmStock,

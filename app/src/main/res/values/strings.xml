@@ -1279,4 +1279,16 @@
     <string name="settings_shutter_sound_import_failed">Cannot import this audio. Choose a playable clip up to 3 seconds, 48 kHz, mono or stereo (10 MB maximum).</string>
     <string name="settings_shutter_sound_save_failed">Cannot save sound settings. Please try again.</string>
     <string name="settings_shutter_sound_preview_failed">Cannot play this sound. Please import it again or restore the default.</string>
+    <string name="settings_raw_color_engine_canon">Canon</string>
+    <string name="settings_raw_color_engine_canon_description">Canon Picture Style color and tone.</string>
+    <string name="settings_raw_canon_picture_style">Picture Style</string>
+    <string name="settings_raw_canon_picture_style_description">Choose a Canon Picture Style. Standard is the default.</string>
+    <string name="settings_raw_canon_style_standard">Standard</string>
+    <string name="settings_raw_canon_style_portrait">Portrait</string>
+    <string name="settings_raw_canon_style_landscape">Landscape</string>
+    <string name="settings_raw_canon_style_neutral">Neutral</string>
+    <string name="settings_raw_canon_style_faithful">Faithful</string>
+    <string name="settings_raw_canon_style_monochrome">Monochrome</string>
+    <string name="settings_raw_canon_exposure_compensation">Canon exposure compensation (EV)</string>
+    <string name="settings_raw_canon_exposure_compensation_description">Additional exposure adjustment for Canon rendering.</string>
 </resources>

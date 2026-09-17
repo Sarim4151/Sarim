@@ -18,6 +18,7 @@ import com.hinnka.mycamera.raw.HncsFilmCurveMode
 import com.hinnka.mycamera.raw.HncsRenderIntent
 import com.hinnka.mycamera.raw.HncsProfileManager
 import com.hinnka.mycamera.raw.LumixPhotoStyle
+import com.hinnka.mycamera.raw.CanonPictureStyle
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.RawAdaptiveExposureMode
@@ -252,6 +253,10 @@ object GalleryMediaStore {
             rawProfileToneMap = metadata.rawToneMappingParameters.useProfileToneMap,
             rawOppoMasterToneMap = metadata.rawToneMappingParameters.useOppoMasterToneMap,
             rawLumixPhotoStyle = metadata.rawToneMappingParameters.lumixPhotoStyle.assetName,
+            rawCanonPictureStyle = metadata.rawToneMappingParameters.canonPictureStyle.persistedValue,
+            rawCanonExposureCompensationEv = RawToneMappingParameters.normalizeCanonExposureCompensation(
+                metadata.rawToneMappingParameters.canonExposureCompensationEv
+            ),
             rawLumixColorMatchingEnabled = metadata.rawToneMappingParameters.lumixColorMatchingEnabled,
             rawHncsColorMatchingEnabled = metadata.rawToneMappingParameters.hncsColorMatchingEnabled,
             rawPhotonHdr = metadata.rawToneMappingParameters.usePhotonHdr,
@@ -456,6 +461,8 @@ object GalleryMediaStore {
                 useProfileToneMap = rawProfileToneMap,
                 useOppoMasterToneMap = rawOppoMasterToneMap,
                 lumixPhotoStyle = LumixPhotoStyle.fromPersistedValue(rawLumixPhotoStyle),
+                canonPictureStyle = CanonPictureStyle.fromPersistedValue(rawCanonPictureStyle),
+                canonExposureCompensationEv = rawCanonExposureCompensationEv,
                 lumixColorMatchingEnabled = rawLumixColorMatchingEnabled,
                 hncsColorMatchingEnabled = rawHncsColorMatchingEnabled,
                 usePhotonHdr = rawPhotonHdr || legacyPhotonToneMap

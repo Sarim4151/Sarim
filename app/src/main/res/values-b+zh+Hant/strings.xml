@@ -1234,4 +1234,16 @@
     <string name="settings_shutter_sound_import_failed">無法匯入此音訊。請選擇可播放、長度不超過 3 秒、48 kHz、單聲道或立體聲的片段（上限 10 MB）。</string>
     <string name="settings_shutter_sound_save_failed">無法儲存聲音設定。請再試一次。</string>
     <string name="settings_shutter_sound_preview_failed">無法播放此聲音。請重新匯入，或恢復預設。</string>
+    <string name="settings_raw_color_engine_canon">Canon</string>
+    <string name="settings_raw_color_engine_canon_description">Canon 相片風格色彩與色調。</string>
+    <string name="settings_raw_canon_picture_style">相片風格</string>
+    <string name="settings_raw_canon_picture_style_description">選擇 Canon 相片風格，預設為標準。</string>
+    <string name="settings_raw_canon_style_standard">標準</string>
+    <string name="settings_raw_canon_style_portrait">人像</string>
+    <string name="settings_raw_canon_style_landscape">風景</string>
+    <string name="settings_raw_canon_style_neutral">中性</string>
+    <string name="settings_raw_canon_style_faithful">忠實</string>
+    <string name="settings_raw_canon_style_monochrome">單色</string>
+    <string name="settings_raw_canon_exposure_compensation">Canon 曝光補償（EV）</string>
+    <string name="settings_raw_canon_exposure_compensation_description">在一般曝光補償的基礎上，額外調整 Canon 算圖曝光。</string>
 </resources>

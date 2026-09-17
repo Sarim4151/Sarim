@@ -510,7 +510,7 @@ class RawDemosaicProcessor {
         )
         // Lens calibration is unavailable during synthetic startup warmup. Compile calibrated engines
         // here; only actual photos with calibrated render plans execute its tone shader.
-        val engineToneReady = if (warmupColorEngine.isLumix || warmupColorEngine.isHncs) {
+        val engineToneReady = if (warmupColorEngine.usesCameraInputDomain) {
             engineTonePass.prewarm(warmupColorEngine)
         } else renderEngineTonePass(
             inputTextureId = inputTextureId,
@@ -519,6 +519,7 @@ class RawDemosaicProcessor {
             spectralFilmLut = null,
             hncsRenderPlan = null,
             lumixRenderPlan = null,
+            canonRenderPlan = null,
             colorEngine = warmupColorEngine,
             profileToEngineTransform = identityMatrix3x3(),
             profileExposureUniforms = ProfileExposureUniforms.NEUTRAL,
@@ -534,7 +535,7 @@ class RawDemosaicProcessor {
             viewportWidth = programSize.width,
             viewportHeight = programSize.height,
         )
-        val srgbInputTextureId = if (warmupColorEngine.isLumix) {
+        val srgbInputTextureId = if (warmupColorEngine.isLumix || warmupColorEngine.isCanon) {
             inputTextureId
         } else if (engineToneReady && warmupColorEngine.isHncs) {
             setupAdjustmentFramebuffer(programSize.width, programSize.height)
@@ -1661,6 +1662,7 @@ class RawDemosaicProcessor {
         val spectralFilmLut: SpectralFilmLut?,
         val hncsRenderPlan: HncsRenderPlan?,
         val lumixRenderPlan: LumixRenderPlan?,
+        val canonRenderPlan: CanonRenderPlan?,
         val engineWorkingColorSpace: ColorSpace,
         val profileToEngineTransform: FloatArray,
         val shadowsHighlightsParams: ShadowsHighlightsParams,
@@ -2429,6 +2431,7 @@ class RawDemosaicProcessor {
         val targetCamera = when {
             requestedColorEngine.isLumix -> EquivalentCameraTarget.LumixS9
             requestedColorEngine.isHncs -> EquivalentCameraTarget.HasselbladX2DII100C
+            requestedColorEngine.isCanon -> EquivalentCameraTarget.CanonEOSR5
             else -> null
         }
         var embeddedDngRenderPlan: DcpRenderPlan? = sourceDngRenderPlan
@@ -2457,10 +2460,10 @@ class RawDemosaicProcessor {
                 profileWorkingColorSpace.xg, profileWorkingColorSpace.yg,
                 profileWorkingColorSpace.xb, profileWorkingColorSpace.yb,
                 profileWorkingColorSpace.xw, profileWorkingColorSpace.yw,
-                embeddedCalibrationOnly = requestedColorEngine.isLumix || requestedColorEngine.isHncs,
+                embeddedCalibrationOnly = requestedColorEngine.usesCameraInputDomain,
             )
             if (dngRawData == null) {
-                if (requestedColorEngine.isLumix || requestedColorEngine.isHncs) {
+                if (requestedColorEngine.usesCameraInputDomain) {
                     PLog.e(TAG, "Camera RGB engine RAW decode failed; color-converted fallback is disabled")
                     return@withContext null
                 }
@@ -2519,7 +2522,7 @@ class RawDemosaicProcessor {
                     profileWorkingColorSpace)) {
                     "ForwardMatrix calibration requires an independent scene white for dual-illuminant interpolation"
                 }
-            } else if ((requestedColorEngine.isLumix || requestedColorEngine.isHncs) &&
+            } else if ((requestedColorEngine.usesCameraInputDomain) &&
                 dngRawData.cameraCalibration == null
             ) {
                 primarySourceProfile?.let {
@@ -3030,7 +3033,7 @@ class RawDemosaicProcessor {
             (!cameraColorMatchingEnabled || actualMetadata.cameraCalibration == null)
         val sourceColorCorrectionMatrix = if (directCameraInput) {
             EquivalentCameraCalibration.whiteBalanceTransform(actualMetadata)
-        } else if ((colorEngine.isLumix || colorEngine.isHncs) &&
+        } else if ((colorEngine.usesCameraInputDomain) &&
             actualMetadata.cameraCalibration != null
         ) {
             EquivalentCameraCalibration.sourceToProPhoto(actualMetadata)
@@ -3077,6 +3080,20 @@ class RawDemosaicProcessor {
                 colorCorrectionCoordinate = lumixColorCorrectionCoordinate,
             )
         } else null
+        val canonRenderPlan = if (colorEngine.isCanon) {
+            check(profileWorkingColorSpace == ColorSpace.ProPhoto)
+            check(dngFile != null || actualMetadata.cameraCalibration != null) {
+                "Canon requires fixed source ColorMatrix calibration for camera capture"
+            }
+            CanonProfile.createRenderPlan(context, normalizedToneMappingParameters.canonPictureStyle)
+        } else null
+        if (colorEngine.isCanon) {
+            PLog.i(TAG, "Canon EOS R5 rendering: style=${normalizedToneMappingParameters.canonPictureStyle} " +
+                "input=wb-camera-rgb profileToCamera=${cameraInputTransform.contentToString()} " +
+                "target=${targetCamera?.assetPath} position=after-public-pgtm " +
+                "kernel=0x1f5b20 nativeOutput=YUV referenceISO=100 " +
+                "photonHdr=${normalizedToneMappingParameters.usePhotonHdr}")
+        }
         if (colorEngine.isLumix) {
             PLog.i(TAG, "Lumix S9 equivalent Camera RGB pipeline: style=${normalizedToneMappingParameters.lumixPhotoStyle} " +
                 "sourceWhite=${actualMetadata.whitePointXy?.contentToString()} " +
@@ -3699,8 +3716,10 @@ class RawDemosaicProcessor {
             val effectiveExposureCompensation = rawExposureCompensation
             val effectiveHighlightsAdjustment = rawHighlightsAdjustment
             val engineDefaultExposureCompensation = colorEngine.defaultExposureCompensationEv
+            val engineExposureCompensation =
+                normalizedToneMappingParameters.engineExposureCompensationEv(colorEngine)
             val profileExposureCompensation =
-                effectiveExposureCompensation + engineDefaultExposureCompensation
+                effectiveExposureCompensation + engineDefaultExposureCompensation + engineExposureCompensation
             val profileExposureUniforms = computeProfileExposureUniforms(
                 metadata = actualMetadata,
                 profileExposureCompensation = profileExposureCompensation,
@@ -3724,6 +3743,7 @@ class RawDemosaicProcessor {
                 TAG,
                 "RAW render exposure: manualEv=$effectiveExposureCompensation " +
                     "engineDefaultEv=${colorEngine.defaultExposureCompensationEv} " +
+                    "engineAdjustmentEv=$engineExposureCompensation " +
                     "engineCompensationDomain=${colorEngine.exposureCompensationDomain} " +
                     "profileExposureEv=${profileExposureUniforms.exposureEv} " +
                     "defaultBlackRender=${resolveProfileDefaultBlackRender(
@@ -3778,6 +3798,7 @@ class RawDemosaicProcessor {
                         spectralFilmLut = spektrafilmLut,
                         hncsRenderPlan = hncsRenderPlan,
                         lumixRenderPlan = lumixRenderPlan,
+                        canonRenderPlan = canonRenderPlan,
                         engineWorkingColorSpace = engineWorkingColorSpace,
                         profileToEngineTransform = profileToEngineTransform,
                         shadowsHighlightsParams = shadowsHighlightsParams,
@@ -3926,6 +3947,7 @@ class RawDemosaicProcessor {
                     spectralFilmLut = spektrafilmLut,
                     hncsRenderPlan = hncsRenderPlan,
                     lumixRenderPlan = lumixRenderPlan,
+                    canonRenderPlan = canonRenderPlan,
                     colorEngine = colorEngine,
                     outputWorkingColorSpace = engineWorkingColorSpace,
                     profileToEngineTransform = combinedProfileToEngineTransform,
@@ -3951,6 +3973,7 @@ class RawDemosaicProcessor {
                             spectralFilmLut = spektrafilmLut,
                             hncsRenderPlan = hncsRenderPlan,
                             lumixRenderPlan = lumixRenderPlan,
+                            canonRenderPlan = canonRenderPlan,
                             colorEngine = colorEngine,
                             outputWorkingColorSpace = engineWorkingColorSpace,
                             profileToEngineTransform = combinedProfileToEngineTransform,
@@ -4076,6 +4099,7 @@ class RawDemosaicProcessor {
                             spectralFilmLut = spektrafilmLut,
                             hncsRenderPlan = hncsRenderPlan,
                             lumixRenderPlan = lumixRenderPlan,
+                            canonRenderPlan = canonRenderPlan,
                             colorEngine = colorEngine,
                             outputWorkingColorSpace = engineWorkingColorSpace,
                             profileToEngineTransform = profileToEngineTransform,
@@ -4400,6 +4424,7 @@ class RawDemosaicProcessor {
                     spectralFilmLut = config.spectralFilmLut,
                     hncsRenderPlan = config.hncsRenderPlan,
                     lumixRenderPlan = config.lumixRenderPlan,
+                    canonRenderPlan = config.canonRenderPlan,
                     colorEngine = config.colorEngine,
                     outputWorkingColorSpace = config.engineWorkingColorSpace,
                     profileToEngineTransform = config.profileToEngineTransform,
@@ -4434,6 +4459,7 @@ class RawDemosaicProcessor {
                         spectralFilmLut = config.spectralFilmLut,
                         hncsRenderPlan = config.hncsRenderPlan,
                         lumixRenderPlan = config.lumixRenderPlan,
+                        canonRenderPlan = config.canonRenderPlan,
                         colorEngine = config.colorEngine,
                         outputWorkingColorSpace = config.engineWorkingColorSpace,
                         profileToEngineTransform = config.profileToEngineTransform,
@@ -6859,6 +6885,7 @@ class RawDemosaicProcessor {
         spectralFilmLut: SpectralFilmLut? = null,
         hncsRenderPlan: HncsRenderPlan? = null,
         lumixRenderPlan: LumixRenderPlan? = null,
+        canonRenderPlan: CanonRenderPlan? = null,
         colorEngine: RawRenderingEngine = RawRenderingEngine.AdobeCurve,
         outputWorkingColorSpace: ColorSpace = ColorSpace.ProPhoto,
         profileToEngineTransform: FloatArray = identityMatrix3x3(),
@@ -6886,6 +6913,7 @@ class RawDemosaicProcessor {
                 spectralFilmLut = spectralFilmLut,
                 hncsRenderPlan = hncsRenderPlan,
                 lumixRenderPlan = lumixRenderPlan,
+                canonRenderPlan = canonRenderPlan,
                 colorEngine = colorEngine,
                 profileToEngineTransform = profileToEngineTransform,
                 profileExposureUniforms = profileExposureUniforms,
@@ -7004,6 +7032,7 @@ class RawDemosaicProcessor {
         spectralFilmLut: SpectralFilmLut?,
         hncsRenderPlan: HncsRenderPlan?,
         lumixRenderPlan: LumixRenderPlan?,
+        canonRenderPlan: CanonRenderPlan?,
         colorEngine: RawRenderingEngine,
         profileToEngineTransform: FloatArray,
         profileExposureUniforms: ProfileExposureUniforms,
@@ -7044,6 +7073,7 @@ class RawDemosaicProcessor {
                 spectralFilmLut = spectralFilmLut,
                 hncsRenderPlan = hncsRenderPlan,
                 lumixRenderPlan = lumixRenderPlan,
+                canonRenderPlan = canonRenderPlan,
                 bindProfileGainTable = { program ->
                     if (metadata != null) {
                         bindProfileGainTableMap(
@@ -7452,6 +7482,7 @@ class RawDemosaicProcessor {
         spectralFilmLut: SpectralFilmLut?,
         hncsRenderPlan: HncsRenderPlan?,
         lumixRenderPlan: LumixRenderPlan?,
+        canonRenderPlan: CanonRenderPlan?,
         colorEngine: RawRenderingEngine,
         outputWorkingColorSpace: ColorSpace,
         profileToEngineTransform: FloatArray,
@@ -7514,6 +7545,7 @@ class RawDemosaicProcessor {
                         spectralFilmLut = spectralFilmLut,
                         hncsRenderPlan = hncsRenderPlan,
                         lumixRenderPlan = lumixRenderPlan,
+                        canonRenderPlan = canonRenderPlan,
                         bindProfileGainTable = { program ->
                             bindProfileGainTableMap(
                                 program = program,

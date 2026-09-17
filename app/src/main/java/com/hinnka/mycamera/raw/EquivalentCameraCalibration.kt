@@ -17,15 +17,16 @@ internal class EquivalentCameraCalibration(private val target: EquivalentCameraT
                     "Unable to parse S9 calibration"
                 })
             }
-            EquivalentCameraTarget.HasselbladX2DII100C -> {
+            EquivalentCameraTarget.HasselbladX2DII100C,
+            EquivalentCameraTarget.CanonEOSR5 -> {
                 val json = context.assets.open(target.assetPath).bufferedReader().use {
                     JSONObject(it.readText())
                 }
-                require(json.getInt("schemaVersion") == 1) { "Unsupported HNCS calibration format" }
+                require(json.getInt("schemaVersion") == 1) { "Unsupported target calibration format" }
                 fun matrix(name: String): FloatArray? {
                     if (json.isNull(name)) return null
                     val values = json.getJSONArray(name)
-                    require(values.length() == 9) { "HNCS $name must contain nine values" }
+                    require(values.length() == 9) { "Target $name must contain nine values" }
                     return FloatArray(9) { values.getDouble(it).toFloat() }
                 }
                 // Preserve original matrix slots and absent illuminants. A single
@@ -98,7 +99,8 @@ internal class EquivalentCameraCalibration(private val target: EquivalentCameraT
 
 internal enum class EquivalentCameraTarget(val assetPath: String) {
     LumixS9("dcp/Panasonic DC-S9 Adobe Standard.dcp"),
-    HasselbladX2DII100C("hncs/x2d_ii_100c_calibration.json");
+    HasselbladX2DII100C("hncs/x2d_ii_100c_calibration.json"),
+    CanonEOSR5("canon/eos_r5/calibration.json");
 
     val calibration by lazy { EquivalentCameraCalibration(this) }
 }

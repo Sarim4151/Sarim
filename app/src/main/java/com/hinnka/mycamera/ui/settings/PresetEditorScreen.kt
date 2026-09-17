@@ -33,6 +33,8 @@ import com.hinnka.mycamera.ui.components.CurveChannel
 import com.hinnka.mycamera.raw.HncsFilmCurveMode
 import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.raw.LumixPhotoStyle
+import com.hinnka.mycamera.raw.CanonPictureStyle
+import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawDenoiseDefaults
 import com.hinnka.mycamera.raw.RawSharpeningDefaults
@@ -42,6 +44,8 @@ import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 import com.hinnka.mycamera.ui.components.FrameSelector
 import com.hinnka.mycamera.ui.components.RawBaselineColorCorrectionSelector
 import com.hinnka.mycamera.ui.components.LumixPhotoStyleSelector
+import com.hinnka.mycamera.ui.components.CanonPictureStyleSelector
+import com.hinnka.mycamera.ui.components.CanonExposureCompensationSetting
 import com.hinnka.mycamera.ui.components.RawDcpSelector
 import com.hinnka.mycamera.ui.components.SliderSettingItem
 import com.hinnka.mycamera.ui.components.rawDcpLensOptions
@@ -137,6 +141,13 @@ fun PresetEditorScreen(
     var rawLumixPhotoStyle by remember {
         mutableStateOf(LumixPhotoStyle.fromPersistedValue(sourcePreset?.rawLumixPhotoStyle))
     }
+    var rawCanonPictureStyle by remember {
+        mutableStateOf(CanonPictureStyle.fromPersistedValue(sourcePreset?.rawCanonPictureStyle))
+    }
+    var rawCanonExposureCompensationEv by remember {
+        mutableStateOf(sourcePreset?.rawCanonExposureCompensationEv
+            ?: RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_DEFAULT)
+    }
     var rawOppoMasterToneMap by remember { mutableStateOf(sourcePreset?.rawOppoMasterToneMap ?: false) }
     var rawSpectralFilmStock by remember { mutableStateOf(sourcePreset?.rawSpectralFilmStock ?: "kodak_portra_400") }
     var rawSpectralFilmPrint by remember { mutableStateOf(sourcePreset?.rawSpectralFilmPrint ?: "kodak_2383") }
@@ -177,6 +188,8 @@ fun PresetEditorScreen(
             rawWhitePointCorrection = rawWhitePointCorrection,
             rawOppoMasterToneMap = rawOppoMasterToneMap,
             rawLumixPhotoStyle = rawLumixPhotoStyle.assetName,
+            rawCanonPictureStyle = rawCanonPictureStyle.persistedValue,
+            rawCanonExposureCompensationEv = rawCanonExposureCompensationEv,
             rawLumixColorMatchingEnabled = sourcePreset?.rawLumixColorMatchingEnabled ?: true,
             rawHncsColorMatchingEnabled = sourcePreset?.rawHncsColorMatchingEnabled ?: true,
             rawSpectralFilmStock = rawSpectralFilmStock,
@@ -453,6 +466,7 @@ fun PresetEditorScreen(
                         RawRenderingEngine.DarktableFilmic -> stringResource(R.string.settings_raw_color_engine_darktable_filmic)
                         RawRenderingEngine.Spektrafilm -> stringResource(R.string.settings_raw_color_engine_spectral_film)
                         RawRenderingEngine.Lumix -> stringResource(R.string.settings_raw_color_engine_lumix)
+                        RawRenderingEngine.Canon -> stringResource(R.string.settings_raw_color_engine_canon)
                         RawRenderingEngine.Hncs -> stringResource(
                             R.string.settings_raw_color_engine_hncs
                         )
@@ -480,6 +494,19 @@ fun PresetEditorScreen(
                         selectedStyle = rawLumixPhotoStyle,
                         onSelectStyle = { rawLumixPhotoStyle = it },
                     )
+                }
+
+                AnimatedVisibility(visible = rawRenderingEngine.isCanon) {
+                    Column {
+                        CanonPictureStyleSelector(
+                            selectedStyle = rawCanonPictureStyle,
+                            onSelectStyle = { rawCanonPictureStyle = it },
+                        )
+                        CanonExposureCompensationSetting(
+                            value = rawCanonExposureCompensationEv,
+                            onValueChange = { rawCanonExposureCompensationEv = it },
+                        )
+                    }
                 }
 
                 AnimatedVisibility(visible = rawRenderingEngine == RawRenderingEngine.AdobeCurve) {

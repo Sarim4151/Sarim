@@ -28,6 +28,7 @@ import com.hinnka.mycamera.raw.HncsFilmCurveMode
 import com.hinnka.mycamera.raw.HncsRenderIntent
 import com.hinnka.mycamera.raw.HncsProfileManager
 import com.hinnka.mycamera.raw.LumixPhotoStyle
+import com.hinnka.mycamera.raw.CanonPictureStyle
 import com.hinnka.mycamera.raw.RawRenderingEngine
 import com.hinnka.mycamera.raw.RawAdaptiveExposureMode
 import com.hinnka.mycamera.raw.RawProcessingPreferences
@@ -373,6 +374,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val RAW_PROFILE_TONE_MAP_KEY = booleanPreferencesKey("raw_profile_tone_map")
         private val RAW_OPPO_MASTER_TONE_MAP_KEY = booleanPreferencesKey("raw_oppo_master_tone_map")
         private val RAW_LUMIX_PHOTO_STYLE_KEY = stringPreferencesKey("raw_lumix_photo_style")
+        private val RAW_CANON_PICTURE_STYLE_KEY = stringPreferencesKey("raw_canon_picture_style")
+        private val RAW_CANON_EXPOSURE_COMPENSATION_KEY = floatPreferencesKey("raw_canon_exposure_compensation_ev")
         private val RAW_LUMIX_COLOR_MATCHING_KEY = booleanPreferencesKey("raw_lumix_color_matching_enabled")
         private val RAW_HNCS_COLOR_MATCHING_KEY = booleanPreferencesKey("raw_hncs_color_matching_enabled")
         private val RAW_PHOTON_HDR_KEY = booleanPreferencesKey("raw_photon_hdr")
@@ -651,6 +654,9 @@ class UserPreferencesRepository(private val context: Context) {
                     // Capture development has one supported adaptive-exposure path: HDRNet.
                     // Photo-level metadata may still disable it for an imported DNG.
                     lumixPhotoStyle = LumixPhotoStyle.fromPersistedValue(preferences[RAW_LUMIX_PHOTO_STYLE_KEY]),
+                    canonPictureStyle = CanonPictureStyle.fromPersistedValue(preferences[RAW_CANON_PICTURE_STYLE_KEY]),
+                    canonExposureCompensationEv = preferences[RAW_CANON_EXPOSURE_COMPENSATION_KEY]
+                        ?: RawToneMappingParameters.CANON_EXPOSURE_COMPENSATION_DEFAULT,
                     lumixColorMatchingEnabled = preferences[RAW_LUMIX_COLOR_MATCHING_KEY] ?: true,
                     hncsColorMatchingEnabled = preferences[RAW_HNCS_COLOR_MATCHING_KEY] ?: true,
                     usePhotonHdr = true
@@ -1259,6 +1265,8 @@ class UserPreferencesRepository(private val context: Context) {
             preferences[RAW_PROFILE_TONE_MAP_KEY] = normalized.useProfileToneMap
             preferences[RAW_OPPO_MASTER_TONE_MAP_KEY] = normalized.useOppoMasterToneMap
             preferences[RAW_LUMIX_PHOTO_STYLE_KEY] = normalized.lumixPhotoStyle.assetName
+            preferences[RAW_CANON_PICTURE_STYLE_KEY] = normalized.canonPictureStyle.persistedValue
+            preferences[RAW_CANON_EXPOSURE_COMPENSATION_KEY] = normalized.canonExposureCompensationEv
             preferences[RAW_LUMIX_COLOR_MATCHING_KEY] = normalized.lumixColorMatchingEnabled
             preferences[RAW_HNCS_COLOR_MATCHING_KEY] = normalized.hncsColorMatchingEnabled
             preferences[RAW_PHOTON_HDR_KEY] = normalized.usePhotonHdr
@@ -2510,6 +2518,8 @@ class UserPreferencesRepository(private val context: Context) {
                 preferences[LEGACY_PROFILE_TONE_MAP_KEY] = false
                 preferences[RAW_OPPO_MASTER_TONE_MAP_KEY] = normalized.useOppoMasterToneMap
                 preferences[RAW_LUMIX_PHOTO_STYLE_KEY] = normalized.lumixPhotoStyle.assetName
+                preferences[RAW_CANON_PICTURE_STYLE_KEY] = normalized.canonPictureStyle.persistedValue
+                preferences[RAW_CANON_EXPOSURE_COMPENSATION_KEY] = normalized.canonExposureCompensationEv
                 preferences[RAW_LUMIX_COLOR_MATCHING_KEY] = normalized.lumixColorMatchingEnabled
                 preferences[RAW_HNCS_COLOR_MATCHING_KEY] = normalized.hncsColorMatchingEnabled
                 preferences[RAW_PHOTON_HDR_KEY] = normalized.usePhotonHdr

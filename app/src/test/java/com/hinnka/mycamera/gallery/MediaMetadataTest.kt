@@ -1,10 +1,39 @@
 package com.hinnka.mycamera.gallery
 
 import com.hinnka.mycamera.raw.RawMetadata
+import com.hinnka.mycamera.raw.CanonPictureStyle
+import com.hinnka.mycamera.raw.RawToneMappingParameters
+import com.hinnka.mycamera.raw.RawRenderingEngine
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MediaMetadataTest {
+    @Test
+    fun mergingRawMetadataPreservesEachCanonStyleAndPhotonHdrState() {
+        for (style in CanonPictureStyle.entries) {
+            for (hdrEnabled in listOf(false, true)) {
+                val metadata = MediaMetadata(
+                    rawRenderingEngine = RawRenderingEngine.Canon,
+                    rawExposureCompensation = 0.75f,
+                    rawToneMappingParameters = RawToneMappingParameters(
+                        canonPictureStyle = style,
+                        canonExposureCompensationEv = -1.25f,
+                        usePhotonHdr = hdrEnabled,
+                    ),
+                )
+
+                val merged = metadata.merge(rawMetadata(iso = 1600))
+
+                assertEquals(1600, merged.iso)
+                assertEquals(RawRenderingEngine.Canon, merged.rawRenderingEngine)
+                assertEquals(style, merged.rawToneMappingParameters.canonPictureStyle)
+                assertEquals(-1.25f, merged.rawToneMappingParameters.canonExposureCompensationEv, 0f)
+                assertEquals(0.75f, requireNotNull(merged.rawExposureCompensation), 0f)
+                assertEquals(hdrEnabled, merged.rawToneMappingParameters.usePhotonHdr)
+            }
+        }
+    }
+
     @Test
     fun mergeKeepsExistingIsoWhenRawIsoIsFallback100() {
         val metadata = MediaMetadata(iso = 800)
