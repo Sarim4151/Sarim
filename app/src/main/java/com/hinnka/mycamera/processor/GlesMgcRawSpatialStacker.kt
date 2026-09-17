@@ -1201,9 +1201,32 @@ internal class GlesMgcRawSpatialStacker(
                     if (assessment.accepted) {
                         bentoAccepted = true
                         acceptedBentoExposureRatio = exposureRatio
-                        bentoCalibration = normalizedCalibration
+                        // V25 SpatialMerge (0x367abf4) replaces the accepted Bento slice's
+                        // MaximumMergeWeight with 1, then derives its kernel sigma from that
+                        // weight. Keeping the exposure-scaled noise weight here makes an R8
+                        // mask's last step to 1 abruptly switch from clipped base to ultrashort.
+                        // Share this calibration with Bayer/RGB merge and strength capture so
+                        // their weights and kernel sigmas describe the same selected frame.
+                        val selectedMergeWeight = SPATIAL_IDENTITY_MULTIPLIER
+                        val selectedCalibration = normalizedCalibration.copy(
+                            globalFrameWeight = selectedMergeWeight,
+                            rejectionWeightScale = selectedMergeWeight,
+                            kernelSigma = MgcSpatialMergeTuning.kernelSigma(
+                                baseSpatialScale = bayerKernelTuning.baseSpatialScale,
+                                mergeWeight = selectedMergeWeight,
+                            ),
+                        )
+                        bentoCalibration = selectedCalibration
                         bentoFlowTexture = flow.texture
                         bentoBayerAlignmentTexture = bayerAlignment
+                        PLog.i(
+                            TAG,
+                            "MGC Bento selected calibration index=$ultrashortIndex " +
+                                "noiseWeight=${normalizedCalibration.globalFrameWeight} " +
+                                "mergeWeight=${selectedCalibration.globalFrameWeight} " +
+                                "kernelSigma=${selectedCalibration.kernelSigma} " +
+                                "inputGain=${selectedCalibration.inputGain}",
+                        )
                     }
                     bentoPostAlignNs = System.nanoTime() - postAlignStartNs
                 } finally {
@@ -3664,8 +3687,9 @@ internal class GlesMgcRawSpatialStacker(
             )
         val globalFrameWeight = if (processorPipeline == MgcRawProcessorPipeline.SPATIAL) {
             // V25 SpatialMerge stores sub_38B1274's shadow-domain MaximumMergeWeight in the
-            // frame_weights buffer consumed by MergeRgbRaw16F16. The signal-domain expected
-            // weight is computed only for the diagnostic table and is not the AOT input.
+            // frame_weights buffer consumed by MergeRgbRaw16F16, except that the accepted
+            // Bento frame is overridden after assessment. The signal-domain expected weight
+            // is computed only for the diagnostic table and is not the AOT input.
             MgcSpatialMergeTuning.maximumMergeWeight(
                 baseReadVariance = kernelTuning.referenceGreenReadVariance,
                 alternateReadVariance = sourceRead.getOrElse(1) { 0f },
