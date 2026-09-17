@@ -302,7 +302,6 @@ data class PreferenceUpdateValue<T>(val value: T)
 
 data class CameraFeaturePreferencesUpdate(
     val captureMode: PreferenceUpdateValue<CaptureMode>? = null,
-    val videoLogProfile: PreferenceUpdateValue<VideoLogProfile>? = null,
     val lutId: PreferenceUpdateValue<String?>? = null,
     val effects: PreferenceUpdateValue<EffectParams>? = null,
     val aspectRatio: PreferenceUpdateValue<String>? = null,
@@ -2440,9 +2439,6 @@ class UserPreferencesRepository(private val context: Context) {
         context.dataStore.edit { preferences ->
             update.captureMode?.let {
                 preferences[CAPTURE_MODE] = it.value.name
-            }
-            update.videoLogProfile?.let {
-                preferences[VIDEO_LOG_PROFILE] = it.value.name
             }
             update.lutId?.let {
                 if (it.value != null) {

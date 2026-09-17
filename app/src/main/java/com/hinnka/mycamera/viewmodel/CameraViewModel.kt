@@ -1031,6 +1031,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         if (captureModeWillChange) {
             cameraController.setCaptureMode(targetCaptureMode)
+            if (targetCaptureMode == CaptureMode.VIDEO) {
+                // Photo mode disables the active Log profile without clearing the saved selection.
+                cameraController.setVideoLogProfile(prefs.videoLogProfile)
+            }
             resolveLutIdForMode(prefs, targetCaptureMode)?.let(::applyLut)
             currentSurfaceTexture = null
             cameraController.closeCamera()
@@ -1084,12 +1088,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         userPreferencesRepository.saveCameraFeaturePreferences(
             CameraFeaturePreferencesUpdate(
                 captureMode = update.captureMode?.let { PreferenceUpdateValue(it.value) },
-                videoLogProfile = update.captureMode
-                    ?.takeIf {
-                        it.value != CaptureMode.VIDEO &&
-                            prefs.videoLogProfile != VideoLogProfile.OFF
-                    }
-                    ?.let { PreferenceUpdateValue(VideoLogProfile.OFF) },
                 lutId = if (persistLutInVideoSlot) {
                     null
                 } else {
