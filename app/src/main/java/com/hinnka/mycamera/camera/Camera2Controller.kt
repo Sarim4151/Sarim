@@ -371,6 +371,12 @@ class Camera2Controller(private val context: Context) {
     private val _state = MutableStateFlow(CameraState())
     val state: StateFlow<CameraState> = _state.asStateFlow()
 
+    @Volatile
+    var retainCaptureSettingsEnabled: Boolean = false
+        private set
+    private var retainedCaptureSettings: CustomCaptureSettings? = null
+    private var pendingRetainedAwbTemperature: Int? = null
+
     // Live Photo 录制器
     val livePhotoRecorder = LivePhotoRecorder(context)
     val realtimeStabilizationCoordinator = RealtimeStabilizationCoordinator(context)
@@ -1206,10 +1212,14 @@ class Camera2Controller(private val context: Context) {
             // 关键修复：只在自动曝光模式下更新 ISO 和快门速度
             // 手动模式下保持用户设置不变（因为预览使用的是限制后的曝光时间，不是用户设置的值）
             _state.value = _state.value.copy(
-                iso = if (isAutoExposure) actualIso ?: _state.value.iso else _state.value.iso,
-                shutterSpeed = if (isAutoExposure) actualExposureTimeNs
+                iso = if (isAutoExposure && _state.value.isIsoAuto) actualIso ?: _state.value.iso else _state.value.iso,
+                shutterSpeed = if (isAutoExposure && _state.value.isShutterSpeedAuto) actualExposureTimeNs
                     ?: _state.value.shutterSpeed else _state.value.shutterSpeed,
-                awbMode = awbMode,
+                // In-flight results must not undo a user's WB mode change. A session without
+                // a manual anchor still reports the automatic fallback used by the request.
+                awbMode = if (_state.value.awbMode == CameraMetadata.CONTROL_AWB_MODE_OFF &&
+                    manualWhiteBalanceAnchor == null
+                ) awbMode else _state.value.awbMode,
                 actualAwbTemperature = actualAwbTemperature,
                 actualAwbTint = whiteBalanceResult.colorTint,
                 actualAwbGains = actualAwbGains,
@@ -1221,6 +1231,14 @@ class Camera2Controller(private val context: Context) {
                 // 手动对焦保留用户目标值，避免镜头移动中的回报值改变后续拍摄和预览请求。
                 focusDistance = if (_state.value.isAutoFocus) focusDistance else _state.value.focusDistance
             )
+            pendingRetainedAwbTemperature?.let { temperature ->
+                if (canAdjustManualWhiteBalance(whiteBalanceResult)) {
+                    setAwbTemperature(temperature)
+                    if (pendingRetainedAwbTemperature == null) {
+                        PLog.d(TAG, "Restored retained white balance: ${temperature}K")
+                    }
+                }
+            }
         }
     }
 
@@ -2668,6 +2686,7 @@ class Camera2Controller(private val context: Context) {
                     )
                 }
                 refreshHyperfocalFocusDistanceIfEnabled(updatePreview = false)
+                applyRetainedCaptureSettings()
             } catch (e: Exception) {
                 handleCameraOpenFailure(
                     cameraId = openCameraId,
@@ -5371,6 +5390,99 @@ class Camera2Controller(private val context: Context) {
 
 // ==================== 曝光控制 ====================
 
+    /** Serialize user changes and their snapshots with the asynchronous focus controls. */
+    fun updateUserCaptureSettings(
+        update: Camera2Controller.() -> Unit,
+        onUpdated: (CustomCaptureSettings) -> Unit,
+    ) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post { updateUserCaptureSettings(update, onUpdated) }
+            return
+        }
+        update(this)
+        val settings = snapshotCustomCaptureSettings()
+        if (retainCaptureSettingsEnabled) {
+            retainedCaptureSettings = settings
+            onUpdated(settings)
+        }
+    }
+
+    fun setCaptureSettingsRetention(
+        enabled: Boolean,
+        savedSettings: CustomCaptureSettings? = null,
+        onConfigured: ((CustomCaptureSettings?) -> Unit)? = null,
+    ) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post { setCaptureSettingsRetention(enabled, savedSettings, onConfigured) }
+            return
+        }
+        retainCaptureSettingsEnabled = enabled
+        retainedCaptureSettings = if (enabled) savedSettings ?: snapshotCustomCaptureSettings() else null
+        if (!enabled) pendingRetainedAwbTemperature = null
+        onConfigured?.invoke(retainedCaptureSettings)
+    }
+
+    private fun snapshotCustomCaptureSettings(): CustomCaptureSettings {
+        val current = _state.value
+        return CustomCaptureSettings.fromState(current).copy(
+            // Preserve the mode to return to when hyperfocal focus is turned off.
+            isAutoFocus = focusModeBeforeHyperfocal ?: current.isAutoFocus,
+            focusDistance = focusDistanceBeforeHyperfocal ?: current.focusDistance,
+            awbMode = if (pendingRetainedAwbTemperature != null) {
+                CameraMetadata.CONTROL_AWB_MODE_OFF
+            } else current.awbMode,
+            awbTemperature = pendingRetainedAwbTemperature ?: current.awbTemperature,
+        )
+    }
+
+    /** Apply after lens capabilities are loaded, before constructing the first preview request. */
+    private fun applyRetainedCaptureSettings() {
+        val settings = retainedCaptureSettings ?: return
+        val current = _state.value
+        val evStep = current.getExposureCompensationStep()
+        val evRange = current.getExposureCompensationRange()
+        val compensation = if (evStep > 0f) {
+            (settings.exposureCompensationEv / evStep).roundToInt()
+                .coerceIn(evRange.lower, evRange.upper)
+        } else 0
+        val supportsManualExposure = isManualSensorSupported &&
+            availableAeModes.contains(CaptureRequest.CONTROL_AE_MODE_OFF)
+        val isoAuto = settings.isIsoAuto || !supportsManualExposure
+        val shutterAuto = settings.isShutterSpeedAuto || !supportsManualExposure
+        val isoRange = current.getIsoRange()
+        val restoredIso = settings.iso.coerceIn(isoRange.lower, isoRange.upper)
+        val restoredShutter = coerceManualShutterSpeed(current, settings.shutterSpeedNs)
+        val manualExposureAdjustment = if (!isoAuto && !shutterAuto) {
+            (ln(restoredIso.toDouble() / settings.iso) +
+                ln(restoredShutter.toDouble() / settings.shutterSpeedNs)) / ln(2.0)
+        } else 0.0
+        _state.value = current.copy(
+            exposureCompensation = compensation,
+            exposureBias = if (isoAuto || shutterAuto) {
+                compensation * evStep
+            } else settings.exposureBiasEv + manualExposureAdjustment.toFloat(),
+            isIsoAuto = isoAuto,
+            iso = restoredIso,
+            isShutterSpeedAuto = shutterAuto,
+            shutterSpeed = restoredShutter,
+        )
+        setAutoFocus(settings.isAutoFocus || current.minimumFocusDistance <= 0f)
+        if (!settings.isAutoFocus) setFocusDistance(settings.focusDistance)
+        if (settings.isHyperfocalFocusEnabled) setHyperfocalFocusEnabled(true)
+
+        // Manual WB needs a fresh CCT or gains/transform anchor from this camera session.
+        manualWhiteBalanceAnchor = null
+        if (settings.awbMode == CameraMetadata.CONTROL_AWB_MODE_OFF) {
+            setAwbMode(CameraMetadata.CONTROL_AWB_MODE_AUTO)
+            pendingRetainedAwbTemperature = settings.awbTemperature
+        } else {
+            setAwbMode(settings.awbMode)
+        }
+        PLog.d(TAG, "Restored custom capture settings for camera=${current.currentCameraId}: $settings")
+    }
+
     /**
      * 设置曝光补偿
      */
@@ -5543,6 +5655,7 @@ class Camera2Controller(private val context: Context) {
      * 设置白平衡模式
      */
     fun setAwbMode(mode: Int) {
+        pendingRetainedAwbTemperature = null
         val normalizedMode = if (availableAwbModes.isEmpty() || mode in availableAwbModes) {
             mode
         } else {
@@ -5622,6 +5735,8 @@ class Camera2Controller(private val context: Context) {
             PLog.w(TAG, "Manual white balance temperature ignored: current CCT or gains/transform result is unavailable")
             return
         }
+
+        pendingRetainedAwbTemperature = null
 
         _state.value = _state.value.copy(
             awbTemperature = clampedKelvin,

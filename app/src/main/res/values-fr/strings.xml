@@ -324,4 +324,6 @@
     <string name="settings_shutter_sound_import_failed">Impossible d’importer cet audio. Choisissez un clip lisible de 3 secondes maximum, en 48 kHz, mono ou stéréo (10 Mo maximum).</string>
     <string name="settings_shutter_sound_save_failed">Impossible d’enregistrer les réglages du son. Veuillez réessayer.</string>
     <string name="settings_shutter_sound_preview_failed">Impossible de lire ce son. Veuillez le réimporter ou rétablir la valeur par défaut.</string>
+    <string name="settings_retain_capture_settings">Conserver les réglages personnalisés de l’appareil photo</string>
+    <string name="settings_retain_capture_settings_description">Restaure la compensation d’exposition, la vitesse d’obturation, l’ISO, la mise au point et la balance des blancs, ainsi que leurs modes automatique/manuel, à la réouverture de l’appareil photo. La désactivation efface les réglages enregistrés.</string>
 </resources>

@@ -2336,6 +2336,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val prefs = userPreferencesRepository.userPreferences.firstOrNull()
             if (prefs != null) {
+                cameraController.setCaptureSettingsRetention(
+                    prefs.retainCaptureSettings,
+                    prefs.customCaptureSettings,
+                )
                 // 应用保存的画面比例
                 try {
                     val savedAspectRatio = AspectRatio.valueOf(prefs.aspectRatio)
@@ -2733,6 +2737,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         cameraReopenJob?.cancel()
         cameraOpenInFlight = true
         cameraReopenJob = viewModelScope.launch {
+            isInitialized.first { it }
             if (currentSurfaceTexture !== surfaceTexture) return@launch
             syncVendorCaptureSettingsToController()
             cameraController.openCamera(
@@ -2916,6 +2921,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun resetExposureCompensationForCameraRestart() {
+        if (cameraController.retainCaptureSettingsEnabled) return
         if (state.value.exposureCompensation == 0) return
         PLog.d(TAG, "Reset exposure compensation for camera restart")
         cameraController.setExposureCompensation(0)
@@ -3654,21 +3660,21 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * 设置曝光补偿
      */
     fun setExposureCompensation(value: Int) {
-        cameraController.setExposureCompensation(value)
+        updateUserCaptureSettings { setExposureCompensation(value) }
     }
 
     /**
      * 设置 ISO
      */
     fun setIso(value: Int) {
-        cameraController.setIso(value)
+        updateUserCaptureSettings { setIso(value) }
     }
 
     /**
      * 设置快门速度
      */
     fun setShutterSpeed(value: Long) {
-        cameraController.setShutterSpeed(value)
+        updateUserCaptureSettings { setShutterSpeed(value) }
     }
 
     /**
@@ -3686,15 +3692,34 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setAutoFocus(auto: Boolean) {
-        cameraController.setAutoFocus(auto)
+        updateUserCaptureSettings { setAutoFocus(auto) }
     }
 
     fun setFocusDistance(distance: Float) {
-        cameraController.setFocusDistance(distance)
+        updateUserCaptureSettings {
+            if (state.value.isAutoFocus) setAutoFocus(false)
+            setFocusDistance(distance)
+        }
     }
 
     fun setHyperfocalFocusEnabled(enabled: Boolean) {
-        cameraController.setHyperfocalFocusEnabled(enabled)
+        updateUserCaptureSettings { setHyperfocalFocusEnabled(enabled) }
+    }
+
+    private fun updateUserCaptureSettings(update: Camera2Controller.() -> Unit) {
+        cameraController.updateUserCaptureSettings(update) { settings ->
+            viewModelScope.launch {
+                userPreferencesRepository.saveCustomCaptureSettings(settings)
+            }
+        }
+    }
+
+    fun setRetainCaptureSettings(enabled: Boolean) {
+        cameraController.setCaptureSettingsRetention(enabled) { settings ->
+            viewModelScope.launch {
+                userPreferencesRepository.saveCaptureSettingsRetention(enabled, settings)
+            }
+        }
     }
 
     /**
@@ -4007,35 +4032,35 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * 设置曝光自动模式
      */
     fun setAutoExposure(enabled: Boolean) {
-        cameraController.setAutoExposure(enabled)
+        updateUserCaptureSettings { setAutoExposure(enabled) }
     }
 
     /**
      * 设置 ISO 自动模式
      */
     fun setIsoAuto(enabled: Boolean) {
-        cameraController.setIsoAuto(enabled)
+        updateUserCaptureSettings { setIsoAuto(enabled) }
     }
 
     /**
      * 设置快门自动模式
      */
     fun setShutterSpeedAuto(enabled: Boolean) {
-        cameraController.setShutterSpeedAuto(enabled)
+        updateUserCaptureSettings { setShutterSpeedAuto(enabled) }
     }
 
     /**
      * 设置白平衡模式
      */
     fun setAwbMode(mode: Int) {
-        cameraController.setAwbMode(mode)
+        updateUserCaptureSettings { setAwbMode(mode) }
     }
 
     /**
      * 设置白平衡色温
      */
     fun setAwbTemperature(kelvin: Int) {
-        cameraController.setAwbTemperature(kelvin)
+        updateUserCaptureSettings { setAwbTemperature(kelvin) }
     }
 
     fun setMeteringMode(mode: MeteringMode) {

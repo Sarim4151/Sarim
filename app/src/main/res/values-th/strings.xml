@@ -942,4 +942,6 @@
     <string name="settings_shutter_sound_import_failed">นำเข้าเสียงนี้ไม่ได้ โปรดเลือกคลิปที่เล่นได้ ความยาวไม่เกิน 3 วินาที, 48 kHz, โมโนหรือสเตอริโอ (ขนาดสูงสุด 10 MB)</string>
     <string name="settings_shutter_sound_save_failed">บันทึกการตั้งค่าเสียงไม่ได้ โปรดลองอีกครั้ง</string>
     <string name="settings_shutter_sound_preview_failed">เล่นเสียงนี้ไม่ได้ โปรดนำเข้าอีกครั้งหรือคืนค่าเริ่มต้น</string>
+    <string name="settings_retain_capture_settings">เก็บการตั้งค่ากล้องที่กำหนดเอง</string>
+    <string name="settings_retain_capture_settings_description">คืนค่าการชดเชยแสง ความเร็วชัตเตอร์ ISO โฟกัส และสมดุลแสงขาว รวมถึงโหมดอัตโนมัติ/แมนนวลของแต่ละรายการ เมื่อเปิดกล้องอีกครั้ง การปิดตัวเลือกนี้จะล้างการตั้งค่าที่บันทึกไว้</string>
 </resources>

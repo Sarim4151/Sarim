@@ -1144,4 +1144,6 @@
     <string name="settings_raw_canon_style_monochrome">モノクロ</string>
     <string name="settings_raw_canon_exposure_compensation">Canon 露出補正（EV）</string>
     <string name="settings_raw_canon_exposure_compensation_description">通常の露出補正に加えて、Canonレンダリングの露出を調整します。</string>
+    <string name="settings_retain_capture_settings">カスタム撮影設定を保持</string>
+    <string name="settings_retain_capture_settings_description">カメラを再度開いたときに、露出補正、シャッタースピード、ISO、フォーカス、ホワイトバランスと、それぞれの自動／手動モードを復元します。オフにすると保存済みの設定を消去します。</string>
 </resources>

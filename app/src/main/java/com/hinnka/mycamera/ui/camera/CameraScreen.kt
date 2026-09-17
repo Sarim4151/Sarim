@@ -1029,10 +1029,7 @@ fun CameraScreen(
                         CameraParameter.EXPOSURE_COMPENSATION -> viewModel.setExposureCompensation((value / state.getExposureCompensationStep()).roundToInt())
                         CameraParameter.SHUTTER_SPEED -> viewModel.setShutterSpeed(value.toLong())
                         CameraParameter.ISO -> viewModel.setIso(value.toInt())
-                        CameraParameter.FOCUS -> {
-                            if (state.isAutoFocus) viewModel.setAutoFocus(false)
-                            viewModel.setFocusDistance(value)
-                        }
+                        CameraParameter.FOCUS -> viewModel.setFocusDistance(value)
                         CameraParameter.WHITE_BALANCE -> viewModel.setAwbTemperature(value.toInt())
                     }
                 },

@@ -2584,6 +2584,18 @@ fun SettingsScreen(
                         showTitle = false
                     ) {
                         SwitchSettingItem(
+                            title = stringResource(R.string.settings_retain_capture_settings),
+                            description = stringResource(R.string.settings_retain_capture_settings_description),
+                            checked = userPreferences.retainCaptureSettings,
+                            onCheckedChange = viewModel::setRetainCaptureSettings
+                        )
+
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        SwitchSettingItem(
                             title = stringResource(R.string.settings_shutter_sound),
                             description = stringResource(R.string.settings_shutter_sound_description),
                             checked = shutterSoundEnabled,

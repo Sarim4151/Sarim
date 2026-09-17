@@ -1291,4 +1291,6 @@
     <string name="settings_raw_canon_style_monochrome">Monochrome</string>
     <string name="settings_raw_canon_exposure_compensation">Canon exposure compensation (EV)</string>
     <string name="settings_raw_canon_exposure_compensation_description">Additional exposure adjustment for Canon rendering.</string>
+    <string name="settings_retain_capture_settings">Keep custom camera settings</string>
+    <string name="settings_retain_capture_settings_description">Restore exposure compensation, shutter speed, ISO, focus and white balance, including auto/manual modes, when reopening the camera. Turning this off clears saved settings.</string>
 </resources>

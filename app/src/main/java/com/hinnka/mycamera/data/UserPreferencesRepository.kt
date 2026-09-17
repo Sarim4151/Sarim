@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.hinnka.mycamera.camera.AspectRatio
+import com.hinnka.mycamera.camera.CustomCaptureSettings
 import com.hinnka.mycamera.camera.GridStyle
 import com.hinnka.mycamera.camera.CustomFocalLengthValue
 import com.hinnka.mycamera.camera.CustomVendorKey
@@ -162,6 +163,8 @@ data class UserPreferences(
     val burstSoundFileName: String? = null,
     val vibrationEnabled: Boolean = true,  // 拍摄震动
     val keepScreenOn: Boolean = false,  // 屏幕常亮
+    val retainCaptureSettings: Boolean = false,
+    val customCaptureSettings: CustomCaptureSettings? = null,
     val windowScreenBrightness: Float? = null,  // Activity 窗口屏幕亮度，null 表示使用系统默认
     val volumeKeyAction: VolumeKeyAction = VolumeKeyAction.CAPTURE,  // 音量键操作
     val autoSaveAfterCapture: Boolean = true,  // 自动保存
@@ -413,6 +416,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val BURST_SOUND_FILE_NAME = stringPreferencesKey("burst_sound_file_name")
         private val VIBRATION_ENABLED = booleanPreferencesKey("vibration_enabled")
         private val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
+        private val RETAIN_CAPTURE_SETTINGS = booleanPreferencesKey("retain_capture_settings")
+        private val CUSTOM_CAPTURE_SETTINGS = stringPreferencesKey("custom_capture_settings_v1")
         private val WINDOW_SCREEN_BRIGHTNESS = floatPreferencesKey("window_screen_brightness")
         private val VOLUME_KEY_ACTION = stringPreferencesKey("volume_key_action")
         private val AUTO_SAVE_AFTER_CAPTURE = booleanPreferencesKey("auto_save_after_capture")
@@ -699,6 +704,8 @@ class UserPreferencesRepository(private val context: Context) {
                 burstSoundFileName = preferences[BURST_SOUND_FILE_NAME],
                 vibrationEnabled = preferences[VIBRATION_ENABLED] ?: true,
                 keepScreenOn = preferences[KEEP_SCREEN_ON] ?: false,
+                retainCaptureSettings = preferences[RETAIN_CAPTURE_SETTINGS] ?: false,
+                customCaptureSettings = CustomCaptureSettings.fromJson(preferences[CUSTOM_CAPTURE_SETTINGS]),
                 windowScreenBrightness = preferences[WINDOW_SCREEN_BRIGHTNESS]?.coerceIn(0f, 1f),
                 volumeKeyAction = VolumeKeyAction.valueOf(
                     preferences[VOLUME_KEY_ACTION] ?: VolumeKeyAction.CAPTURE.name
@@ -1546,9 +1553,27 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
-    /**
-     * 保存是否保持屏幕常亮
-     */
+    /** Save the switch and snapshot together so disabling also removes the saved controls. */
+    suspend fun saveCaptureSettingsRetention(enabled: Boolean, settings: CustomCaptureSettings?) {
+        context.dataStore.edit { preferences ->
+            preferences[RETAIN_CAPTURE_SETTINGS] = enabled
+            if (enabled && settings != null) {
+                preferences[CUSTOM_CAPTURE_SETTINGS] = settings.toJson()
+            } else {
+                preferences.remove(CUSTOM_CAPTURE_SETTINGS)
+            }
+        }
+    }
+
+    suspend fun saveCustomCaptureSettings(settings: CustomCaptureSettings) {
+        context.dataStore.edit { preferences ->
+            if (preferences[RETAIN_CAPTURE_SETTINGS] == true) {
+                preferences[CUSTOM_CAPTURE_SETTINGS] = settings.toJson()
+            }
+        }
+    }
+
+    /** 保存是否保持屏幕常亮 */
     suspend fun saveKeepScreenOn(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[KEEP_SCREEN_ON] = enabled

@@ -324,4 +324,6 @@
     <string name="settings_shutter_sound_import_failed">Audio kann nicht importiert werden. Wählen Sie einen abspielbaren Clip mit bis zu 3 Sekunden, 48 kHz, mono oder stereo (maximal 10 MB).</string>
     <string name="settings_shutter_sound_save_failed">Toneinstellungen können nicht gespeichert werden. Bitte versuchen Sie es erneut.</string>
     <string name="settings_shutter_sound_preview_failed">Ton kann nicht wiedergegeben werden. Bitte importieren Sie ihn erneut oder stellen Sie den Standard wieder her.</string>
+    <string name="settings_retain_capture_settings">Benutzerdefinierte Kameraeinstellungen beibehalten</string>
+    <string name="settings_retain_capture_settings_description">Belichtungskorrektur, Verschlusszeit, ISO, Fokus und Weißabgleich einschließlich der jeweiligen Automatik-/Manuell-Modi beim erneuten Öffnen der Kamera wiederherstellen. Beim Ausschalten werden gespeicherte Einstellungen gelöscht.</string>
 </resources>
