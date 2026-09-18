@@ -4,74 +4,11 @@ import android.os.Build
 
 /** Local defaults for Photon's RAW imaging chain, shared by capture and reprocessing. */
 object PhotonCoreImagingTuning {
-    val fusion: PhotonFusionTuning =
-        if (isCmfPhone1()) {
-            PhotonFusionTuning.DEFAULT.copy(
-                // Keep fine texture eligible for multiframe fusion on this sensor.
-                mergeGradientThreshold = -1f,
-                // The CMF RAW noise model is already measured; don't artificially
-                // inflate it before Sabre decides how much detail to retain.
-                noiseCorrelationScale = 0.92f,
-            )
-        } else {
-            PhotonFusionTuning.DEFAULT
-        }
+    val fusion: PhotonFusionTuning = PhotonFusionTuning.DEFAULT
 
-    val denoise: PhotonDenoiseTuning =
-        if (isCmfPhone1()) {
-            PhotonDenoiseTuning.DEFAULT.copy(
-                // Slightly relax luma denoising while keeping coarse-scale cleanup intact.
-                lumaStrengthScale = PhotonPyramidScales(
-                    level1 = 0.96f,
-                    level2 = 0.96f,
-                    level3 = 0.98f,
-                    level4 = 1f,
-                    level5 = 1f,
-                ),
-                // Restore a little more of the original high-frequency signal after denoise.
-                detailReconstructionScale = PhotonPyramidScales(
-                    level1 = 1.10f,
-                    level2 = 1.08f,
-                    level3 = 1.04f,
-                    level4 = 1f,
-                    level5 = 1f,
-                ),
-                // Keep rejection conservative; don't trade texture for noise suppression.
-                outlierRejectionScale = PhotonPyramidScales(
-                    level1 = 0.98f,
-                    level2 = 0.98f,
-                    level3 = 0.99f,
-                    level4 = 1f,
-                    level5 = 1f,
-                ),
-                // Chroma remains at the Photon default to avoid coloured noise.
-                chromaStrengthScale = PhotonPyramidScales.IDENTITY,
-            )
-        } else {
-            PhotonDenoiseTuning.DEFAULT
-        }
-    /**
-     * Local SNR/contrast curves for the original MGC final sharpening kernel.
-     *
-     * CMF Phone 1 gets a restrained detail lift only in the first two native
-     * frequency groups. Band 2 remains unchanged to avoid amplifying coarse
-     * texture/halos. All other devices keep the Photon default unchanged.
-     */
-    val sharpen: PhotonSharpenTuning =
-        if (isCmfPhone1()) {
-            PhotonSharpenTuning.DEFAULT.copy(
-                amount = PhotonSharpenBands(
-                    band0 = 1.08f,
-                    band1 = 1.05f,
-                    band2 = 1f,
-                ),
-            )
-        } else {
-            PhotonSharpenTuning.DEFAULT
-        }
-    private fun isCmfPhone1(): Boolean =
-        Build.MANUFACTURER.equals("Nothing", ignoreCase = true) &&
-            Build.MODEL.equals("A015", ignoreCase = true)
+    val denoise: PhotonDenoiseTuning = PhotonDenoiseTuning.DEFAULT
+
+    val sharpen: PhotonSharpenTuning = PhotonSharpenTuning.DEFAULT
 
     /** Dehaze + DHA baked into HDRNet's ProfileGainTableMap output. */
     val dehaze: PhotonDehazeTuning = PhotonDehazeTuning.DEFAULT
