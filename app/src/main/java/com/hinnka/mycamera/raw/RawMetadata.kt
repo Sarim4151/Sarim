@@ -418,25 +418,36 @@ data class RawMetadata(
                 floatArrayOf(1f, 1f, 1f, 1f)
             }
 
-            // 5. 获取色彩校正矩阵
-            // 优先使用 ForwardMatrix/ColorMatrix 计算 CCM
-            val colorCorrectionMatrix = computeCCMFromCharacteristics(characteristics, wbGains, colorSpace)
-            // Preserve the static physical-camera calibration independently of
-            // the per-frame render CCM. ColorMatrix is XYZ -> camera RGB;
-            // ForwardMatrix and the current CaptureResult transform are not
-            // valid substitutes for this fixed lens identity.
-            val cameraCalibration = RawCameraCalibration.fromCameraCharacteristics(
-                colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
-                    ?.let(::extractCCM),
-                colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
-                    ?.let(::extractCCM),
-                calibrationIlluminant1 = characteristics.get(
-                    CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1,
-                ) ?: 0,
-                calibrationIlluminant2 = characteristics.get(
-                    CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2,
-                )?.toInt() ?: 0,
-            )
+            // 5. Resolve the render color solution.
+            //
+            // CMF Phone 1/A015 exposes a usable Camera2 color solution, but the DNGs
+            // captured from the same device contain a more complete dual-illuminant
+            // ColorMatrix + ForwardMatrix calibration. Use that calibration only on
+            // this exact device; all other cameras keep the existing Camera2 path.
+            val cmfCalibration = CmfPhone1Calibration.takeIf {
+                it.isSupported()
+            }
+            val colorCorrectionMatrix = cmfCalibration?.colorMatrixFor(
+                whiteBalanceGains = whiteBalanceGains,
+                workingColorSpace = colorSpace,
+            ) ?: computeCCMFromCharacteristics(characteristics, wbGains, colorSpace)
+
+            // Preserve the fixed physical-camera calibration independently of the
+            // per-frame render matrix. The CMF profile retains both ColorMatrix and
+            // ForwardMatrix exactly as stored in the DNG.
+            val cameraCalibration = cmfCalibration?.cameraCalibration()
+                ?: RawCameraCalibration.fromCameraCharacteristics(
+                    colorMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
+                        ?.let(::extractCCM),
+                    colorMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
+                        ?.let(::extractCCM),
+                    calibrationIlluminant1 = characteristics.get(
+                        CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1,
+                    ) ?: 0,
+                    calibrationIlluminant2 = characteristics.get(
+                        CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2,
+                    )?.toInt() ?: 0,
+                )
             val camera2ColorCorrectionGains = wbGains
                 ?.let { gains ->
                     floatArrayOf(gains.red, gains.greenEven, gains.greenOdd, gains.blue)
@@ -455,8 +466,10 @@ data class RawMetadata(
                 }
             val camera2ColorCorrectionMode = captureResult
                 .get(CaptureResult.COLOR_CORRECTION_MODE)
-            val cameraWhite = computeCameraWhiteFromCharacteristics(characteristics, wbGains)
-            val whitePointXy = computeWhiteXyFromCharacteristics(characteristics, wbGains)
+            val cameraWhite = cmfCalibration?.cameraWhiteFor(whiteBalanceGains)
+                ?: computeCameraWhiteFromCharacteristics(characteristics, wbGains)
+            val whitePointXy = cmfCalibration?.whitePointFor(whiteBalanceGains)
+                ?: computeWhiteXyFromCharacteristics(characteristics, wbGains)
             val colorTemperature = whitePointXy?.let(DngSdkColorSpec::colorTemperatureForXy)
 
             // 6. 获取镜头阴影校正
