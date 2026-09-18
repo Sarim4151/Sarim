@@ -86,11 +86,11 @@ internal object DngProfileToneCurve {
     // Larger toe power deepens the lowest shadows; toe width extends that behavior upward.
     // Mid power controls the body contrast. Larger shoulder power softens the approach to white.
     // Balance moves the curve vertically without changing either endpoint.
-    private const val PHOTON_PGTM_TOE_POWER = 1.65
-    private const val PHOTON_PGTM_TOE_WIDTH = 0.018
+    private const val PHOTON_PGTM_TOE_POWER = 2.8
+    private const val PHOTON_PGTM_TOE_WIDTH = 0.01
     private const val PHOTON_PGTM_MID_POWER = 1
-    private const val PHOTON_PGTM_SHOULDER_POWER = 1.30
-    private const val PHOTON_PGTM_BALANCE = 1.0
+    private const val PHOTON_PGTM_SHOULDER_POWER = 1.15
+    private const val PHOTON_PGTM_BALANCE = 0.95
 
     private val PHOTON_PGTM_TONE_CURVE_LUT by lazy {
         DcpToneCurve(photonPgtmToneCurvePoints()).toLut(256)
