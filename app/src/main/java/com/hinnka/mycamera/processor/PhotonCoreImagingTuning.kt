@@ -1,11 +1,34 @@
 package com.hinnka.mycamera.processor
 
+import android.os.Build
+
 /** Local defaults for Photon's RAW imaging chain, shared by capture and reprocessing. */
 object PhotonCoreImagingTuning {
     val fusion: PhotonFusionTuning = PhotonFusionTuning.DEFAULT
     val denoise: PhotonDenoiseTuning = PhotonDenoiseTuning.DEFAULT
-    /** Local SNR/contrast curves for the original MGC final sharpening kernel. */
-    val sharpen: PhotonSharpenTuning = PhotonSharpenTuning.DEFAULT
+    /**
+     * Local SNR/contrast curves for the original MGC final sharpening kernel.
+     *
+     * CMF Phone 1 gets a restrained detail lift only in the first two native
+     * frequency groups. Band 2 remains unchanged to avoid amplifying coarse
+     * texture/halos. All other devices keep the Photon default unchanged.
+     */
+    val sharpen: PhotonSharpenTuning =
+        if (isCmfPhone1()) {
+            PhotonSharpenTuning.DEFAULT.copy(
+                amount = PhotonSharpenBands(
+                    band0 = 1.08f,
+                    band1 = 1.05f,
+                    band2 = 1f,
+                ),
+            )
+        } else {
+            PhotonSharpenTuning.DEFAULT
+        }
+    private fun isCmfPhone1(): Boolean =
+        Build.MANUFACTURER.equals("Nothing", ignoreCase = true) &&
+            Build.MODEL.equals("A015", ignoreCase = true)
+
     /** Dehaze + DHA baked into HDRNet's ProfileGainTableMap output. */
     val dehaze: PhotonDehazeTuning = PhotonDehazeTuning.DEFAULT
 }
