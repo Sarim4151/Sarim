@@ -23,7 +23,7 @@ android {
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
-        applicationId = "com.hinnka.mycamera"
+        applicationId = "com.sarim.cmfcamera"
         minSdk = 30
         targetSdk = 36
         versionCode = 158
@@ -95,7 +95,7 @@ android {
     productFlavors {
         create("dev") {
             dimension = "channel"
-            applicationId = "com.hinnka.mycamera.dev"
+            applicationId = "com.sarim.cmfcamera.dev"
         }
         create("google") {
             dimension = "channel"
