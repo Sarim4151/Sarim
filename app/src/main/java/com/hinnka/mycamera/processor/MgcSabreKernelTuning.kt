@@ -1,5 +1,6 @@
 package com.hinnka.mycamera.processor
 
+import android.os.Build
 import kotlin.math.sqrt
 
 /**
@@ -54,18 +55,22 @@ internal object MgcSabreKernelTuning {
         val effectiveSnr = finiteSnr * sqrt(frameCount.coerceAtLeast(0).toFloat() / 12f)
         val resolvedGradientThreshold = mergeGradientThreshold
             ?.takeIf { it.isFinite() }
+        val cmfPhone1 = Build.MANUFACTURER.equals("Nothing", ignoreCase = true) &&
+            Build.MODEL.equals("A015", ignoreCase = true)
+        val detailScale = if (cmfPhone1) 0.94f else 1f
+        val isotropicDetailScale = if (cmfPhone1) 0.96f else 1f
         return Parameters(
             directionalScale = interpolate(
                 effectiveSnr,
                 7.2f to 0.33f,
                 14.4f to 0.25f,
-            ),
+            ) * detailScale,
             isotropicScale = interpolate(
                 effectiveSnr,
                 5.4f to 4.2f,
                 11f to 4f,
                 27f to 3f,
-            ),
+            ) * isotropicDetailScale,
             gradientThreshold = resolvedGradientThreshold ?: interpolate(
                 effectiveSnr,
                 0.9f to 0.01f,
